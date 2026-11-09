@@ -558,3 +558,114 @@ mod tests {
         assert_eq!(v, ['b', 'c', 'd', 'a']);
     }
 }
+
+/// The real Workspace and real terminals (`/bin/sh` in PTYs), driven through GPUI's
+/// headless test platform with keystrokes going through the normal dispatch path.
+#[cfg(test)]
+mod gui_tests {
+    use super::*;
+    use gpui::{TestAppContext, VisualTestContext};
+    use std::time::{Duration, Instant};
+
+    fn config(extra: &str) -> Arc<Config> {
+        let (mut c, w) = crate::config::parse(extra);
+        assert!(w.is_empty(), "{w:?}");
+        c.shell = Some("/bin/sh".into());
+        Arc::new(c)
+    }
+
+    fn open<'a>(cx: &'a mut TestAppContext, extra: &str) -> (Entity<Workspace>, &'a mut VisualTestContext) {
+        // PTY reader threads are real threads: let the executor wait for them.
+        cx.executor().allow_parking();
+        let config = config(extra);
+        cx.add_window_view(|window, cx| Workspace::new(config, Launch::default(), window, cx))
+    }
+
+    /// Run the app until `cond` holds (real processes answer asynchronously).
+    fn wait_until(cx: &mut VisualTestContext, what: &str, cond: impl Fn(&Workspace) -> bool, ws: &Entity<Workspace>) {
+        let start = Instant::now();
+        loop {
+            cx.run_until_parked();
+            if ws.read_with(cx, |w, _| cond(w)) {
+                return;
+            }
+            assert!(start.elapsed() < Duration::from_secs(10), "timed out waiting for {what}");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    fn state(ws: &Entity<Workspace>, cx: &mut VisualTestContext) -> (usize, usize, Vec<usize>) {
+        ws.read_with(cx, |w, _| (w.tabs.len(), w.active, w.tabs.iter().map(|t| t.root.leaves().len()).collect()))
+    }
+
+    fn focused(ws: &Entity<Workspace>, cx: &mut VisualTestContext) -> Option<EntityId> {
+        cx.update(|window, cx| ws.read(cx).current(window, cx))
+    }
+
+    #[gpui::test]
+    fn tabs_open_switch_and_move(cx: &mut TestAppContext) {
+        let (ws, cx) = open(cx, "");
+        assert_eq!(state(&ws, cx), (1, 0, vec![1]));
+        cx.simulate_keystrokes("ctrl-shift-t ctrl-shift-t");
+        assert_eq!(state(&ws, cx), (3, 2, vec![1, 1, 1]));
+        cx.simulate_keystrokes("ctrl-tab");
+        assert_eq!(state(&ws, cx).1, 0, "wraps around");
+        cx.simulate_keystrokes("ctrl-shift-tab");
+        assert_eq!(state(&ws, cx).1, 2);
+        // Move the active (last) tab to the front; it stays active.
+        let moved = ws.read_with(cx, |w, _| w.tabs[2].focused);
+        cx.simulate_keystrokes("ctrl-shift-alt-pageup ctrl-shift-alt-pageup");
+        let (tabs, active, _) = state(&ws, cx);
+        assert_eq!((tabs, active), (3, 0));
+        assert_eq!(ws.read_with(cx, |w, _| w.tabs[0].focused), moved);
+        // Keyboard focus follows the active tab.
+        assert_eq!(focused(&ws, cx), Some(moved));
+    }
+
+    #[gpui::test]
+    fn splits_focus_resize_and_close(cx: &mut TestAppContext) {
+        let (ws, cx) = open(cx, "");
+        let first = focused(&ws, cx).unwrap();
+        cx.simulate_keystrokes("ctrl-shift-d");
+        let second = focused(&ws, cx).unwrap();
+        assert_ne!(first, second, "focus moves to the new pane");
+        assert_eq!(state(&ws, cx).2, vec![2]);
+        cx.simulate_keystrokes("ctrl-shift-h");
+        assert_eq!(focused(&ws, cx), Some(first));
+        cx.simulate_keystrokes("ctrl-shift-l");
+        assert_eq!(focused(&ws, cx), Some(second));
+        // Grow the right pane: the split ratio moves left.
+        cx.simulate_keystrokes("ctrl-shift-alt-l");
+        let ratio = ws.read_with(cx, |w, _| match &w.tabs[0].root {
+            Node::Split { ratio, .. } => *ratio,
+            _ => unreachable!(),
+        });
+        assert!(ratio < 0.5, "{ratio}");
+        // Close the focused pane: the other one takes over, with focus.
+        cx.simulate_keystrokes("ctrl-shift-w");
+        assert_eq!(state(&ws, cx).2, vec![1]);
+        assert_eq!(focused(&ws, cx), Some(first));
+        assert_eq!(ws.read_with(cx, |w, _| w.views.len()), 1, "closed terminal was dropped");
+    }
+
+    #[gpui::test]
+    fn custom_bindings_replace_defaults(cx: &mut TestAppContext) {
+        let (ws, cx) = open(cx, "bind = ctrl-shift-t none\nbind = alt+n new_tab\n".replace('-', "+").as_str());
+        cx.simulate_keystrokes("ctrl-shift-t");
+        assert_eq!(state(&ws, cx).0, 1, "unbound shortcut does nothing");
+        cx.simulate_keystrokes("alt-n");
+        assert_eq!(state(&ws, cx).0, 2);
+    }
+
+    #[gpui::test]
+    fn exiting_the_shell_closes_only_its_pane(cx: &mut TestAppContext) {
+        let (ws, cx) = open(cx, "");
+        cx.simulate_keystrokes("ctrl-shift-e");
+        let survivor = ws.read_with(cx, |w, _| w.tabs[0].root.leaves()[0]);
+        // Typed into the focused (new) pane: key encoder -> PTY -> /bin/sh.
+        cx.simulate_keystrokes("e x i t enter");
+        wait_until(cx, "pane to close", |w| w.tabs[0].root.leaves().len() == 1, &ws);
+        assert_eq!(ws.read_with(cx, |w, _| w.tabs[0].root.leaves()), vec![survivor]);
+        assert_eq!(focused(&ws, cx), Some(survivor));
+    }
+}

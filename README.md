@@ -193,8 +193,9 @@ uma condição (texto na tela, EOF, modo ativo) com timeout, então a suíte é 
 | Imagens | `lain-vt/tests/graphics.rs` | posicionamento, rolagem, reflow, limpeza e limites |
 | Fuzz | `lain-vt/tests/fuzz.rs` | fluxos aleatórios (semente fixa, reproduzível) + todo byte após todo estado do parser; checa invariantes estruturais a cada passo |
 | PTY | `lain-pty/tests/pty.rs` | processos reais: saída, status, sinais, tamanho, ambiente, vazamento de fds, máscara de sinais, Ctrl+C, limpeza |
+| Interface (headless) | `lain/src/workspace.rs` (`gui_tests`) | o `Workspace` real com terminais e shells reais, dirigido por teclas no despacho normal do GPUI, sem janela nem GPU: abas (abrir, trocar, mover), divisões (criar, foco, redimensionar, fechar), atalhos configurados, e `exit` digitado fechando só aquele painel |
 | Ponta a ponta | `lain-e2e/tests/apps.rs` | programas reais renderizam e respondem; pula se o programa não estiver instalado |
 
-Estado atual: **244 testes, ~2 s** (após compilar) e **93% de cobertura de linhas** no núcleo
+Estado atual: **248 testes, ~2 s** (após compilar) e **93% de cobertura de linhas** no núcleo
 (`lain-vt` 93%, parser 97%). O fuzz já encontrou e travou 5 bugs reais (caracteres largos
 órfãos em casos de borda) antes de chegarem ao uso.
