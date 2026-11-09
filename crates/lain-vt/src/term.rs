@@ -96,6 +96,8 @@ pub struct Modes {
     pub mouse: MouseTracking,
     pub mouse_encoding: MouseEncoding,
     pub color_scheme_updates: bool,
+    /// DECLRMM (mode 69): left/right margins are enabled.
+    pub lr_margins: bool,
 }
 
 impl Default for Modes {
@@ -118,6 +120,7 @@ impl Default for Modes {
             mouse: MouseTracking::None,
             mouse_encoding: MouseEncoding::X10,
             color_scheme_updates: false,
+            lr_margins: false,
         }
     }
 }
@@ -246,6 +249,9 @@ struct State {
     saved: [SavedCursor; 2],
     scroll_top: usize,
     scroll_bottom: usize,
+    /// Left/right margins (DECSLRM), inclusive. Only used while `modes.lr_margins`.
+    left: usize,
+    right: usize,
     tabs: Vec<bool>,
     modes: Modes,
     cursor_shape: CursorShape,
@@ -311,6 +317,8 @@ impl Term {
                 saved: Default::default(),
                 scroll_top: 0,
                 scroll_bottom: rows - 1,
+                left: 0,
+                right: cols - 1,
                 tabs: default_tabs(cols),
                 modes: Modes::default(),
                 cursor_shape: CursorShape::Block,
@@ -674,6 +682,8 @@ impl Term {
         s.rows = rows;
         s.scroll_top = 0;
         s.scroll_bottom = rows - 1;
+        s.left = 0;
+        s.right = cols - 1;
         s.tabs = default_tabs(cols);
         for sv in &mut s.saved {
             sv.cursor.row = sv.cursor.row.min(rows - 1);
@@ -733,7 +743,42 @@ impl State {
         }
     }
 
+    /// Left/right margins narrower than the screen are in effect.
+    #[inline]
+    fn margins_active(&self) -> bool {
+        self.modes.lr_margins && (self.left > 0 || self.right + 1 < self.cols)
+    }
+
+    /// Scroll only the columns between the margins (rows `top..=bot`). Never feeds scrollback.
+    fn scroll_rect(&mut self, n: usize, up: bool) {
+        let (top, bot, l, r) = (self.scroll_top, self.scroll_bottom, self.left, self.right + 1);
+        let n = n.min(bot - top + 1);
+        let blank = self.blank();
+        if up {
+            for row in top..=bot {
+                if row + n <= bot {
+                    let src = self.screen[row + n].clone();
+                    self.screen[row].copy_range_from(&src, l, r, blank);
+                } else {
+                    self.screen[row].erase(l, r, blank);
+                }
+            }
+        } else {
+            for row in (top..=bot).rev() {
+                if row >= top + n {
+                    let src = self.screen[row - n].clone();
+                    self.screen[row].copy_range_from(&src, l, r, blank);
+                } else {
+                    self.screen[row].erase(l, r, blank);
+                }
+            }
+        }
+    }
+
     fn scroll_up(&mut self, n: usize) {
+        if self.margins_active() {
+            return self.scroll_rect(n, true);
+        }
         let (top, bot) = (self.scroll_top, self.scroll_bottom);
         let n = n.min(bot - top + 1);
         let full = top == 0 && bot == self.rows - 1;
@@ -761,6 +806,9 @@ impl State {
     }
 
     fn scroll_down(&mut self, n: usize) {
+        if self.margins_active() {
+            return self.scroll_rect(n, false);
+        }
         let (top, bot) = (self.scroll_top, self.scroll_bottom);
         let n = n.min(bot - top + 1);
         let blank = self.blank();
@@ -794,7 +842,11 @@ impl State {
             if self.modes.origin { (self.scroll_top, self.scroll_bottom) } else { (0, self.rows - 1) };
         let row = if self.modes.origin { row.saturating_add(self.scroll_top) } else { row };
         self.cursor.row = row.clamp(min_row, max_row);
-        self.cursor.col = col.min(self.cols - 1);
+        self.cursor.col = if self.modes.origin && self.modes.lr_margins {
+            col.saturating_add(self.left).clamp(self.left, self.right)
+        } else {
+            col.min(self.cols - 1)
+        };
         self.cursor.pending_wrap = false;
     }
 
@@ -950,6 +1002,8 @@ impl State {
         self.kitty_kbd = Default::default();
         self.scroll_top = 0;
         self.scroll_bottom = rows - 1;
+        self.left = 0;
+        self.right = cols - 1;
         self.tabs = default_tabs(cols);
         self.palette_override.clear();
         self.fg_override = None;
@@ -972,6 +1026,9 @@ impl State {
         self.modes.app_keypad = false;
         self.scroll_top = 0;
         self.scroll_bottom = self.rows - 1;
+        self.left = 0;
+        self.right = self.cols - 1;
+        self.modes.lr_margins = false;
         self.cursor.attrs = Attrs::default();
         self.cursor.charsets = Default::default();
         self.cursor.gl = 0;
@@ -1187,6 +1244,13 @@ impl State {
             2004 => self.modes.bracketed_paste = on,
             2026 => self.modes.synchronized = on,
             2031 => self.modes.color_scheme_updates = on,
+            69 => {
+                self.modes.lr_margins = on;
+                if !on {
+                    self.left = 0;
+                    self.right = self.cols - 1;
+                }
+            }
             _ => {}
         }
     }
@@ -1234,6 +1298,7 @@ impl State {
             2004 => b(m.bracketed_paste),
             2026 => b(m.synchronized),
             2031 => b(m.color_scheme_updates),
+            69 => b(m.lr_margins),
             _ => 0,
         }
     }
@@ -1388,6 +1453,7 @@ impl State {
                 let reply = match buf.as_slice() {
                     b"m" => Some(format!("{}m", self.sgr_string())),
                     b"r" => Some(format!("{};{}r", self.scroll_top + 1, self.scroll_bottom + 1)),
+                    b"s" => Some(format!("{};{}s", self.left + 1, self.right + 1)),
                     b" q" => {
                         let base = match self.cursor_shape {
                             CursorShape::Block => 1,
@@ -1509,7 +1575,7 @@ impl Perform for State {
     fn print_ascii(&mut self, s: &[u8]) {
         // Bulk path: plain ASCII charset, no insert mode, no pending single shift.
         let gl = self.cursor.charsets[self.cursor.gl as usize];
-        if gl != Charset::Ascii || self.cursor.single_shift.is_some() || self.modes.insert {
+        if gl != Charset::Ascii || self.cursor.single_shift.is_some() || self.modes.insert || self.margins_active() {
             for &b in s {
                 self.print(b as char);
             }
@@ -1582,42 +1648,57 @@ impl Perform for State {
             return;
         }
 
+        // With left/right margins, text wraps at the right margin back to the left one
+        // (only while the cursor is inside them, like xterm).
+        let margins = self.margins_active() && self.cursor.col >= self.left && self.cursor.col <= self.right;
+        let (wrap_col, edge) = if margins { (self.left, self.right + 1) } else { (0, self.cols) };
         if self.cursor.pending_wrap && self.modes.autowrap {
-            self.screen[self.cursor.row].wrapped = true;
-            self.cursor.col = 0;
+            if !margins {
+                self.screen[self.cursor.row].wrapped = true;
+            }
+            self.cursor.col = wrap_col;
             self.linefeed();
         }
-        if width == 2 && self.cursor.col + 1 >= self.cols {
-            if self.cols < 2 {
+        if width == 2 && self.cursor.col + 1 >= edge {
+            if edge - wrap_col < 2 {
                 return;
             }
             if self.modes.autowrap {
                 let row = &mut self.screen[self.cursor.row];
-                let last = self.cols - 1;
-                row.set(last, Cell { c: ' ', attrs: Attrs { flags: flags::WIDE_SPACER, ..Attrs::default() } });
-                row.wrapped = true;
-                self.cursor.col = 0;
+                if margins {
+                    // `erase` also clears the other half if a wide char sits on the margin.
+                    row.erase(edge - 1, edge, Cell::default());
+                } else {
+                    row.set(edge - 1, Cell { c: ' ', attrs: Attrs { flags: flags::WIDE_SPACER, ..Attrs::default() } });
+                    row.wrapped = true;
+                }
+                self.cursor.col = wrap_col;
                 self.linefeed();
             } else {
-                self.cursor.col = self.cols - 2;
+                self.cursor.col = edge - 2;
             }
         }
 
         let (row_i, col) = (self.cursor.row, self.cursor.col);
-        let cols = self.cols;
+        let cols = edge;
+        let screen_cols = self.cols;
         let blank = Cell::default();
         let attrs = self.cursor.attrs;
         let insert = self.modes.insert;
         let row = &mut self.screen[row_i];
         if insert {
-            row.insert_blanks(col, width, blank);
+            if margins {
+                row.insert_blanks_in(col, width, edge, blank);
+            } else {
+                row.insert_blanks(col, width, blank);
+            }
         }
         // Don't leave half of a wide char behind.
         if row.is_paired_spacer(col) {
             row.set(col - 1, blank);
         }
         let end = col + width - 1;
-        if row.cells[end].attrs.has(flags::WIDE) && end + 1 < cols {
+        if row.cells[end].attrs.has(flags::WIDE) && end + 1 < screen_cols {
             row.set(end + 1, blank);
         }
         if width == 2 {
@@ -1660,7 +1741,8 @@ impl Perform for State {
                 }
             }
             0x0d => {
-                self.cursor.col = 0;
+                // CR goes to the left margin when the cursor is at or right of it.
+                self.cursor.col = if self.modes.lr_margins && self.cursor.col >= self.left { self.left } else { 0 };
                 self.cursor.pending_wrap = false;
             }
             0x0e => self.cursor.gl = 1,
@@ -1688,11 +1770,13 @@ impl Perform for State {
                 self.cursor.pending_wrap = false;
             }
             ([], b'C') | ([], b'a') => {
-                self.cursor.col = (col + p0(1)).min(cols - 1);
+                let max = if self.modes.lr_margins && col <= self.right { self.right } else { cols - 1 };
+                self.cursor.col = (col + p0(1)).min(max);
                 self.cursor.pending_wrap = false;
             }
             ([], b'D') => {
-                self.cursor.col = col.min(cols - 1).saturating_sub(p0(1));
+                let min = if self.modes.lr_margins && col >= self.left { self.left } else { 0 };
+                self.cursor.col = col.min(cols - 1).saturating_sub(p0(1)).max(min);
                 self.cursor.pending_wrap = false;
             }
             ([], b'E') => {
@@ -1779,6 +1863,9 @@ impl Perform for State {
                 if row < self.scroll_top || row > self.scroll_bottom {
                     return;
                 }
+                if self.margins_active() && (col < self.left || col > self.right) {
+                    return;
+                }
                 let saved_top = self.scroll_top;
                 self.scroll_top = row;
                 if action == b'L' {
@@ -1791,17 +1878,28 @@ impl Perform for State {
                     self.modes.alt_screen = alt;
                 }
                 self.scroll_top = saved_top;
-                self.cursor.col = 0;
+                self.cursor.col = if self.modes.lr_margins { self.left } else { 0 };
                 self.cursor.pending_wrap = false;
             }
-            ([], b'P') => {
+            ([], b'P') | ([], b'@') => {
                 let blank = self.blank();
-                self.screen[row].delete_cells(col.min(cols - 1), p0(1), blank);
-                self.cursor.pending_wrap = false;
-            }
-            ([], b'@') => {
-                let blank = self.blank();
-                self.screen[row].insert_blanks(col.min(cols - 1), p0(1), blank);
+                let col = col.min(cols - 1);
+                if self.margins_active() {
+                    // Only the cells between the cursor and the right margin move.
+                    if (self.left..=self.right).contains(&col) {
+                        let end = self.right + 1;
+                        let r = &mut self.screen[row];
+                        if action == b'P' {
+                            r.delete_cells_in(col, p0(1), end, blank);
+                        } else {
+                            r.insert_blanks_in(col, p0(1), end, blank);
+                        }
+                    }
+                } else if action == b'P' {
+                    self.screen[row].delete_cells(col, p0(1), blank);
+                } else {
+                    self.screen[row].insert_blanks(col, p0(1), blank);
+                }
                 self.cursor.pending_wrap = false;
             }
             ([], b'X') => {
@@ -1829,7 +1927,20 @@ impl Perform for State {
                     self.goto(0, 0);
                 }
             }
-            ([], b's') => self.save_cursor(),
+            ([], b's') => {
+                if self.modes.lr_margins {
+                    // DECSLRM: set left/right margins.
+                    let l = params.get(0, 1) as usize - 1;
+                    let r = (params.get(1, cols.min(u16::MAX as usize) as u16) as usize).min(cols) - 1;
+                    if l < r {
+                        self.left = l;
+                        self.right = r;
+                        self.goto(0, 0);
+                    }
+                } else {
+                    self.save_cursor();
+                }
+            }
             ([], b'u') => self.restore_cursor(),
             ([], b'h') | ([], b'l') | ([b'?'], b'h') | ([b'?'], b'l') => {
                 let on = action == b'h';

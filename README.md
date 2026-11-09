@@ -75,15 +75,19 @@ interceptados pelo compositor.
 
 ## Compatibilidade
 
-Anuncia `TERM=xterm-256color`, `COLORTERM=truecolor`, `TERM_PROGRAM=lain`.
+Anuncia `TERM=xterm-256color`, `COLORTERM=truecolor`, `TERM_PROGRAM=lain`, e cumpre essa
+entrada inteira: um teste lê o terminfo instalado e verifica **todas** as 104 capacidades de
+saída (efeito exato), as 148 de teclado (byte a byte) e os 26 caracteres gráficos (`acsc`).
+Exceções documentadas no teste: os dígitos e o Enter do teclado numérico, que chegam do sistema
+iguais às teclas principais.
 
 | Área | Suporte |
 |---|---|
-| Base | VT100/VT220/xterm: movimento, edição (ICH/DCH/IL/DL/ECH/REP), região de scroll, origin mode, tabs, charsets DEC (G0–G3, SO/SI, SS2/SS3), DECALN, RIS/DECSTR |
+| Base | VT100/VT220/xterm: movimento, edição (ICH/DCH/IL/DL/ECH/REP), região de scroll, **margens esquerda/direita (DECLRMM/DECSLRM)**, origin mode, tabs, charsets DEC (G0–G3, SO/SI, SS2/SS3), DECALN, RIS/DECSTR |
 | Texto | UTF-8, caracteres largos (CJK, emoji), combinantes e ZWJ, reflow ao redimensionar, box-drawing e blocos desenhados por geometria (linhas sempre conectadas) |
 | Estilo | SGR completo: 16/256/truecolor (formas `;` e `:`), negrito, dim, itálico, sublinhado simples/duplo/ondulado/pontilhado/tracejado com cor (SGR 58), riscado, overline, inverso, oculto, reverse video |
 | Telas | 47 / 1047 / 1048 / 1049, scrollback com limite e compactação |
-| Teclado | xterm legado (modificadores, app cursor/keypad), **protocolo de teclado do kitty** (todas as flags, pilha por tela), IME/compose |
+| Teclado | xterm legado (modificadores, app cursor/keypad, operadores do teclado numérico), **protocolo de teclado do kitty** (todas as flags, pilha por tela), IME/compose |
 | Mouse | 9 / 1000 / 1002 / 1003 com codificações X10, UTF-8 (1005), SGR (1006), urxvt (1015), SGR-pixels (1016); rolagem alternativa (1007) |
 | Modos modernos | bracketed paste (2004), **synchronized output** (2026, com timeout), foco (1004), tema claro/escuro (996 / 2031) |
 | Consultas | DA1/DA2/DA3, XTVERSION, DSR/CPR, DECRQM, DECRQSS, XTGETTCAP, XTWINOPS 14/16/18, XTSMGRAPHICS, cores OSC 4/10/11/12 (responde com o mesmo terminador da pergunta) |
@@ -153,7 +157,8 @@ uma condição (texto na tela, EOF, modo ativo) com timeout, então a suíte é 
 | Camada | Onde | O que garante |
 |---|---|---|
 | Unitários | `src/*` (`#[cfg(test)]`) | parser, células, cores, base64, teclado, mouse, seleção, URLs, busca, imagens, config, montagem do frame, box-drawing, barra de rolagem, árvore de divisões (layout, vizinhos, redimensionar, arrastar), atalhos, CLI |
-| Conformidade | `lain-vt/tests/screen.rs` | comportamento VT/xterm de cada sequência (cursor, edição, scroll, wrap, charsets, telas) |
+| Conformidade | `lain-vt/tests/screen.rs` | comportamento VT/xterm de cada sequência (cursor, edição, scroll, wrap, margens, charsets, telas) |
+| Contrato terminfo | `lain-vt/tests/terminfo.rs` | toda capacidade de `xterm-256color` (saída, teclas, acsc, formatos de resposta); capacidade nova não classificada faz o teste falhar |
 | Protocolos e segurança | `lain-vt/tests/protocols.rs` | respostas exatas às consultas e recusa do que é perigoso |
 | Reflow | `lain-vt/tests/reflow.rs` | redimensionar sem perder texto, cursor, largos, combinantes, marcas |
 | Imagens | `lain-vt/tests/graphics.rs` | posicionamento, rolagem, reflow, limpeza e limites |
@@ -161,6 +166,6 @@ uma condição (texto na tela, EOF, modo ativo) com timeout, então a suíte é 
 | PTY | `lain-pty/tests/pty.rs` | processos reais: saída, status, sinais, tamanho, ambiente, vazamento de fds, máscara de sinais, Ctrl+C, limpeza |
 | Ponta a ponta | `lain-e2e/tests/apps.rs` | programas reais renderizam e respondem; pula se o programa não estiver instalado |
 
-Estado atual: **225 testes, ~2 s** (após compilar) e **93% de cobertura de linhas** no núcleo
-(`lain-vt` 93%, parser 97%). O fuzz já encontrou e travou 4 bugs reais (caracteres largos
+Estado atual: **240 testes, ~2 s** (após compilar) e **93% de cobertura de linhas** no núcleo
+(`lain-vt` 93%, parser 97%). O fuzz já encontrou e travou 5 bugs reais (caracteres largos
 órfãos em casos de borda) antes de chegarem ao uso.

@@ -23,6 +23,60 @@ pub enum Key {
     Delete,
     /// F1..=F24.
     F(u8),
+    /// Numeric-keypad keys that are distinguishable from the main block.
+    Keypad(KeypadKey),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum KeypadKey {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Decimal,
+    Separator,
+    /// The center key with NumLock off.
+    Begin,
+}
+
+impl KeypadKey {
+    fn text(self) -> &'static str {
+        match self {
+            KeypadKey::Add => "+",
+            KeypadKey::Subtract => "-",
+            KeypadKey::Multiply => "*",
+            KeypadKey::Divide => "/",
+            KeypadKey::Decimal => ".",
+            KeypadKey::Separator => ",",
+            KeypadKey::Begin => "",
+        }
+    }
+
+    /// Final byte of the SS3 sequence sent in application keypad mode (DECKPAM).
+    fn ss3(self) -> u8 {
+        match self {
+            KeypadKey::Add => b'k',
+            KeypadKey::Subtract => b'm',
+            KeypadKey::Multiply => b'j',
+            KeypadKey::Divide => b'o',
+            KeypadKey::Decimal => b'n',
+            KeypadKey::Separator => b'l',
+            KeypadKey::Begin => b'E',
+        }
+    }
+
+    /// Kitty keyboard protocol key code.
+    fn kitty_code(self) -> u32 {
+        match self {
+            KeypadKey::Decimal => 57409,
+            KeypadKey::Divide => 57410,
+            KeypadKey::Multiply => 57411,
+            KeypadKey::Subtract => 57412,
+            KeypadKey::Add => 57413,
+            KeypadKey::Separator => 57416,
+            KeypadKey::Begin => 57427,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -184,6 +238,16 @@ fn encode_legacy(ev: &KeyEvent, modes: &InputModes) -> Option<Vec<u8>> {
             letter(l, modes.app_cursor)
         }
         Key::F(n @ 1..=4) => letter(b'P' + n - 1, true),
+        Key::Keypad(KeypadKey::Begin) => letter(b'E', modes.app_keypad),
+        Key::Keypad(k) => {
+            if modes.app_keypad && !m.any() {
+                vec![0x1b, b'O', k.ss3()]
+            } else if modes.app_keypad {
+                format!("\x1bO{mp}{}", k.ss3() as char).into_bytes()
+            } else {
+                with_alt(m.alt, k.text().as_bytes().to_vec())
+            }
+        }
         Key::Char(c) => {
             if m.super_ {
                 return None;
@@ -229,6 +293,12 @@ fn encode_kitty(ev: &KeyEvent, flags: u8) -> Option<Vec<u8>> {
                     return Some(text.into_bytes());
                 }
             }
+            // Keypad text keys behave like text: their character unless modified.
+            Key::Keypad(k) if k != KeypadKey::Begin && !m.ctrl && !m.alt && !m.super_ => {
+                if action != KeyAction::Release {
+                    return Some(k.text().as_bytes().to_vec());
+                }
+            }
             Key::Enter | Key::Tab | Key::Backspace if !m.any() => {
                 if action == KeyAction::Release {
                     return None;
@@ -254,6 +324,13 @@ fn encode_kitty(ev: &KeyEvent, flags: u8) -> Option<Vec<u8>> {
         Key::Tab => 9,
         Key::Backspace => 127,
         Key::Escape => 27,
+        // Begin keeps the legacy CSI E form (like the cursor keys) unless reporting all keys.
+        Key::Keypad(KeypadKey::Begin) if !all => {
+            return Some(
+                if mods_field.is_empty() { "\x1b[E".to_string() } else { format!("\x1b[1;{mods_field}E") }.into_bytes(),
+            );
+        }
+        Key::Keypad(k) => k.kitty_code(),
         k => {
             return Some(
                 match functional(k)? {
@@ -437,6 +514,30 @@ mod tests {
         assert_eq!(kitty(shift_a, REPORT_ALL | REPORT_ALTERNATES), "\x1b[97:65;2u");
         assert_eq!(kitty(shift_a, REPORT_ALL | REPORT_TEXT), "\x1b[97;2;65u");
         assert_eq!(kitty(press(Key::Char('e'), Mods::NONE, Some("é")), REPORT_ALL | REPORT_TEXT), "\x1b[101;1;233u");
+    }
+
+    #[test]
+    fn keypad_keys() {
+        use KeypadKey::*;
+        let app = InputModes { app_keypad: true, ..Default::default() };
+        let enc = |k, mods, m: &InputModes| encode_key(&press(Key::Keypad(k), mods, None), m).unwrap();
+        assert_eq!(enc(Add, Mods::NONE, &InputModes::default()), b"+");
+        assert_eq!(enc(Add, Mods::NONE, &app), b"\x1bOk");
+        assert_eq!(enc(Subtract, Mods::NONE, &app), b"\x1bOm");
+        assert_eq!(enc(Multiply, Mods::NONE, &app), b"\x1bOj");
+        assert_eq!(enc(Divide, Mods::NONE, &app), b"\x1bOo");
+        assert_eq!(enc(Decimal, Mods::NONE, &app), b"\x1bOn");
+        assert_eq!(enc(Separator, Mods::NONE, &app), b"\x1bOl");
+        assert_eq!(enc(Add, CTRL, &app), b"\x1bO5k");
+        assert_eq!(enc(Begin, Mods::NONE, &InputModes::default()), b"\x1b[E");
+        assert_eq!(enc(Begin, Mods::NONE, &app), b"\x1bOE");
+        assert_eq!(enc(Begin, SHIFT, &app), b"\x1b[1;2E");
+        assert_eq!(enc(Divide, ALT, &InputModes::default()), b"\x1b/");
+        // Kitty: text unless modified or reporting all keys.
+        assert_eq!(kitty(press(Key::Keypad(Add), Mods::NONE, None), kitty::DISAMBIGUATE), "+");
+        assert_eq!(kitty(press(Key::Keypad(Add), CTRL, None), kitty::DISAMBIGUATE), "\x1b[57413;5u");
+        assert_eq!(kitty(press(Key::Keypad(Add), Mods::NONE, None), kitty::REPORT_ALL), "\x1b[57413u");
+        assert_eq!(kitty(press(Key::Keypad(Begin), Mods::NONE, None), kitty::DISAMBIGUATE), "\x1b[E");
     }
 
     #[test]

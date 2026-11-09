@@ -27,7 +27,8 @@ impl Rng {
 
 const FINALS: &[u8] = b"ABCDEFGHIJKLMPSTXZ@`abcdefghlmnqrstu";
 const PRIVATE: &[&[u8]] = &[b"", b"?", b">", b"<", b"=", b"?$", b"$", b" ", b"!"];
-const MODES: &[u16] = &[1, 4, 5, 6, 7, 12, 20, 25, 47, 66, 1000, 1002, 1003, 1004, 1006, 1047, 1048, 1049, 2004, 2026];
+const MODES: &[u16] =
+    &[1, 4, 5, 6, 7, 12, 20, 25, 47, 66, 69, 1000, 1002, 1003, 1004, 1006, 1047, 1048, 1049, 2004, 2026];
 const TEXT: &[&str] = &["a", "Z", " ", "é", "日", "本", "🦀", "\u{301}", "\u{200d}", "ab", "─", "\u{fe0f}", "\u{ffff}"];
 
 fn gen_chunk(r: &mut Rng, out: &mut Vec<u8>) {
@@ -110,7 +111,15 @@ fn gen_chunk(r: &mut Rng, out: &mut Vec<u8>) {
                 out.push(r.below(256) as u8);
             }
         }
-        14 => out.extend_from_slice(b"\x1b(0lqqk\x1b(B"),
+        14 => {
+            if r.below(2) == 0 {
+                out.extend_from_slice(b"\x1b(0lqqk\x1b(B");
+            } else {
+                // Left/right margins, often with scrolling right after.
+                let (l, w) = (1 + r.below(20), 1 + r.below(30));
+                out.extend_from_slice(format!("\x1b[?69h\x1b[{l};{}s", l + w).as_bytes());
+            }
+        }
         _ => out.extend_from_slice(b"\r\n"),
     }
 }

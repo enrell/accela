@@ -259,6 +259,75 @@ impl Row {
         }
     }
 
+    /// Insert `n` blanks at `col`, shifting cells up to `end` (exclusive) right; cells
+    /// pushed past `end` are lost. Used inside left/right margins.
+    pub fn insert_blanks_in(&mut self, col: usize, n: usize, end: usize, blank: Cell) {
+        let end = end.min(self.cells.len());
+        if col >= end {
+            return;
+        }
+        let n = n.min(end - col);
+        self.drop_combining(end - n, end);
+        self.cells[col..end].rotate_right(n);
+        self.cells[col..col + n].fill(blank);
+        self.shift_combining(col, end, n as isize);
+        self.repair_wide(blank);
+    }
+
+    /// Delete `n` cells at `col`, shifting cells up to `end` (exclusive) left and
+    /// filling the gap before `end` with blanks.
+    pub fn delete_cells_in(&mut self, col: usize, n: usize, end: usize, blank: Cell) {
+        let end = end.min(self.cells.len());
+        if col >= end {
+            return;
+        }
+        let n = n.min(end - col);
+        self.drop_combining(col, col + n);
+        self.cells[col..end].rotate_left(n);
+        self.cells[end - n..end].fill(blank);
+        self.shift_combining(col + n, end, -(n as isize));
+        self.repair_wide(blank);
+    }
+
+    fn shift_combining(&mut self, from: usize, to: usize, by: isize) {
+        for (c, _) in &mut self.combining {
+            if (from..to).contains(&(*c as usize)) {
+                *c = (*c as isize + by) as u16;
+            }
+        }
+    }
+
+    /// Copy cells `from..to` (and their zero-width chars) from `src`.
+    pub fn copy_range_from(&mut self, src: &Row, from: usize, to: usize, blank: Cell) {
+        let to = to.min(self.cells.len()).min(src.cells.len());
+        if from >= to {
+            return;
+        }
+        self.drop_combining(from, to);
+        self.cells[from..to].copy_from_slice(&src.cells[from..to]);
+        for (c, z) in &src.combining {
+            if (from..to).contains(&(*c as usize)) {
+                self.combining.push((*c, z.clone()));
+            }
+        }
+        self.repair_wide(blank);
+    }
+
+    /// Blank any half of a wide char whose other half was cut off (after a partial-row
+    /// move inside margins). Wrap padding in the last column is kept.
+    pub fn repair_wide(&mut self, blank: Cell) {
+        let len = self.cells.len();
+        for c in 0..len {
+            let a = self.cells[c].attrs;
+            let orphan_wide = a.has(flags::WIDE) && !(c + 1 < len && self.cells[c + 1].attrs.has(flags::WIDE_SPACER));
+            let orphan_spacer =
+                a.has(flags::WIDE_SPACER) && !(c > 0 && self.cells[c - 1].attrs.has(flags::WIDE)) && c + 1 != len;
+            if orphan_wide || orphan_spacer {
+                self.cells[c] = blank;
+            }
+        }
+    }
+
     /// Length without trailing default blanks.
     pub fn trimmed_len(&self) -> usize {
         self.cells.iter().rposition(|c| !c.is_default_blank()).map_or(0, |i| i + 1)
@@ -385,6 +454,34 @@ mod tests {
         assert_eq!(text(&r), "ab\u{301}c ");
         r.set(1, Cell::default());
         assert_eq!(r.combining_at(1), None);
+    }
+
+    #[test]
+    fn bounded_insert_and_delete() {
+        let mut r = row("abcdefgh");
+        r.insert_blanks_in(2, 2, 6, Cell::default());
+        assert_eq!(text(&r), "ab  cdgh");
+        r.delete_cells_in(1, 3, 6, Cell::default());
+        assert_eq!(text(&r), "acd   gh");
+    }
+
+    #[test]
+    fn bounded_ops_repair_cut_wide_chars() {
+        let mut r = row("ab    ");
+        r.cells[2] = Cell { c: '日', attrs: Attrs { flags: flags::WIDE, ..Attrs::default() } };
+        r.cells[3].attrs.flags = flags::WIDE_SPACER;
+        // Margin end at 3 cuts the wide char's spacer off: the leftover half is blanked.
+        r.insert_blanks_in(0, 1, 3, Cell::default());
+        assert!(r.cells.iter().all(|c| !c.attrs.has(flags::WIDE) && !(c.attrs.has(flags::WIDE_SPACER))));
+    }
+
+    #[test]
+    fn copy_range_with_combining() {
+        let mut src = row("xyz");
+        src.push_combining(1, '\u{301}');
+        let mut dst = row("abc");
+        dst.copy_range_from(&src, 1, 3, Cell::default());
+        assert_eq!(text(&dst), "ay\u{301}z");
     }
 
     #[test]

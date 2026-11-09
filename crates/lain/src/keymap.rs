@@ -1,7 +1,7 @@
 //! GPUI keystrokes → lain-vt key events.
 
 use gpui::Keystroke;
-use lain_vt::input::{Key, Mods};
+use lain_vt::input::{Key, KeypadKey, Mods};
 
 pub fn mods(k: &Keystroke) -> Mods {
     let m = &k.modifiers;
@@ -27,6 +27,14 @@ pub fn key(k: &Keystroke) -> Option<Key> {
         "insert" => Key::Insert,
         "delete" => Key::Delete,
         "space" => Key::Char(' '),
+        // GPUI names keypad keys after their keysym with the `kp_` prefix removed.
+        "add" => Key::Keypad(KeypadKey::Add),
+        "subtract" => Key::Keypad(KeypadKey::Subtract),
+        "multiply" => Key::Keypad(KeypadKey::Multiply),
+        "divide" => Key::Keypad(KeypadKey::Divide),
+        "decimal" => Key::Keypad(KeypadKey::Decimal),
+        "separator" => Key::Keypad(KeypadKey::Separator),
+        "begin" => Key::Keypad(KeypadKey::Begin),
         f if f.len() >= 2 && f.starts_with('f') && f[1..].bytes().all(|b| b.is_ascii_digit()) => {
             let n: u8 = f[1..].parse().ok()?;
             if !(1..=24).contains(&n) {
@@ -62,6 +70,8 @@ mod tests {
         assert_eq!(key(&ks("a")), Some(Key::Char('a')));
         assert_eq!(key(&ks("shift-a")), Some(Key::Char('a')));
         assert_eq!(key(&ks("f99")), None);
+        assert_eq!(key(&ks("add")), Some(Key::Keypad(KeypadKey::Add)));
+        assert_eq!(key(&ks("begin")), Some(Key::Keypad(KeypadKey::Begin)));
     }
 
     #[test]

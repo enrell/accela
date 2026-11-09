@@ -406,3 +406,113 @@ fn scroll_to_line_centers_offscreen_lines_only() {
     t.scroll_to_line(t.line_id_range().1 - 1);
     assert_eq!(t.display_offset(), 0);
 }
+
+// ---- left/right margins (DECLRMM ?69 + DECSLRM) ----
+
+/// 10x4 screen filled with distinct rows, margins at columns 3..=6 (1-based 4..7).
+fn margined() -> lain_vt::Term {
+    let mut t = term(10, 4);
+    t.feed(b"0123456789\r\nabcdefghij\r\nABCDEFGHIJ\r\nklmnopqrst");
+    t.feed(b"\x1b[?69h\x1b[4;7s");
+    t
+}
+
+#[test]
+fn csi_s_is_save_cursor_without_declrmm() {
+    let mut t = term(10, 2);
+    t.feed(b"\x1b[1;5H\x1b[s\x1b[2;1H\x1b[u");
+    assert_eq!(t.cursor(), (0, 4));
+}
+
+#[test]
+fn decslrm_homes_cursor_and_wraps_inside_margins() {
+    let mut t = margined();
+    assert_eq!(t.cursor(), (0, 0));
+    t.feed(b"\x1b[1;4HWXYZQ");
+    // Printing wraps at the right margin (col 6) back to the left margin (col 3).
+    assert_eq!(t.screen_text()[0], "012WXYZ789");
+    assert_eq!(t.screen_text()[1], "abcQefghij");
+    assert!(!t.screen()[0].wrapped);
+}
+
+#[test]
+fn scrolling_moves_only_the_margin_rectangle() {
+    let mut t = margined();
+    t.feed(b"\x1b[S");
+    assert_eq!(t.screen_text(), ["012defg789", "abcDEFGhij", "ABCnopqHIJ", "klm    rst"]);
+    t.feed(b"\x1b[T");
+    assert_eq!(t.screen_text(), ["012    789", "abcdefghij", "ABCDEFGHIJ", "klmnopqrst"]);
+    // Nothing goes to scrollback.
+    assert_eq!(t.scrollback().len(), 0);
+}
+
+#[test]
+fn linefeed_at_bottom_scrolls_rectangle() {
+    let mut t = margined();
+    t.feed(b"\x1b[4;5H\n");
+    assert_eq!(t.screen_text()[0], "012defg789");
+    assert_eq!(t.screen_text()[3], "klm    rst");
+}
+
+#[test]
+fn insert_delete_lines_and_chars_respect_margins() {
+    let mut t = margined();
+    t.feed(b"\x1b[2;5H\x1b[L");
+    assert_eq!(t.screen_text(), ["0123456789", "abc    hij", "ABCdefgHIJ", "klmDEFGrst"]);
+    let mut t = margined();
+    t.feed(b"\x1b[2;5H\x1b[2P");
+    assert_eq!(t.screen_text()[1], "abcdg  hij");
+    let mut t = margined();
+    t.feed(b"\x1b[2;5H\x1b[2@");
+    assert_eq!(t.screen_text()[1], "abcd  ehij");
+    // Outside the margins ICH/IL do nothing.
+    let mut t = margined();
+    t.feed(b"\x1b[2;1H\x1b[@\x1b[L");
+    assert_eq!(t.screen_text()[1], "abcdefghij");
+}
+
+#[test]
+fn cr_and_cursor_motion_stop_at_margins() {
+    let mut t = margined();
+    t.feed(b"\x1b[1;6H\r");
+    assert_eq!(t.cursor(), (0, 3));
+    t.feed(b"\x1b[1;2H\r");
+    assert_eq!(t.cursor(), (0, 0));
+    t.feed(b"\x1b[1;5H\x1b[99C");
+    assert_eq!(t.cursor(), (0, 6));
+    t.feed(b"\x1b[99D");
+    assert_eq!(t.cursor(), (0, 3));
+}
+
+#[test]
+fn origin_mode_is_relative_to_both_margins() {
+    let mut t = margined();
+    t.feed(b"\x1b[2;3r\x1b[?6h\x1b[1;1HX\x1b[9;9HY");
+    assert_eq!(t.screen_text()[1], "abcXefghij");
+    assert_eq!(t.screen_text()[2], "ABCDEFYHIJ");
+}
+
+#[test]
+fn margins_reset_and_reports() {
+    let mut t = margined();
+    assert_eq!(common::reply(&mut t, "\x1bP$qs\x1b\\"), "\x1bP1$r4;7s\x1b\\");
+    assert_eq!(common::reply(&mut t, "\x1b[?69$p"), "\x1b[?69;1$y");
+    t.feed(b"\x1b[?69l");
+    assert_eq!(common::reply(&mut t, "\x1bP$qs\x1b\\"), "\x1bP1$r1;10s\x1b\\");
+    // DECSTR turns DECLRMM off.
+    let mut t = margined();
+    t.feed(b"\x1b[!p");
+    assert!(!t.modes().lr_margins);
+}
+
+#[test]
+fn wide_char_on_right_margin_is_cleared_as_a_pair() {
+    // Found by the fuzzer: a wide char straddling the right margin, then another wide
+    // char printed at the margin, used to leave an orphaned second half.
+    let mut t = term(10, 3);
+    t.feed("\x1b[1;5H日".as_bytes());
+    t.feed("\x1b[?69h\x1b[2;5s\x1b[1;5H本".as_bytes());
+    let r = &t.screen()[0];
+    assert!(!r.cells[5].attrs.has(lain_vt::flags::WIDE_SPACER));
+    assert_eq!(t.screen_text()[1], " 本");
+}
