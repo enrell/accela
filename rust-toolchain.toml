@@ -1,0 +1,5 @@
+# Pinned so local builds, CI and releases use the same compiler and lints.
+[toolchain]
+channel = "1.99.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
