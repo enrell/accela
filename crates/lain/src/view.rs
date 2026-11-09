@@ -111,6 +111,9 @@ impl TerminalView {
         if let Some(dir) = launch.cwd.filter(|d| std::path::Path::new(d).is_dir()) {
             cmd = cmd.cwd(dir);
         }
+        for var in crate::PRIVATE_ENV.get().into_iter().flatten() {
+            cmd = cmd.env_remove(*var);
+        }
         let pty = match Pty::spawn(&cmd, cols, rows) {
             Ok(p) => p,
             Err(e) => {
@@ -126,17 +129,30 @@ impl TerminalView {
         std::thread::Builder::new()
             .name("pty-reader".into())
             .spawn(move || {
-                let mut buf = vec![0u8; 64 * 1024];
+                const CHUNK: usize = 256 * 1024;
+                let mut buf = vec![0u8; CHUNK];
                 loop {
-                    match reader.read(&mut buf) {
+                    // Block for the first bytes, then drain whatever is already buffered:
+                    // programs that write line by line produce many tiny reads, and one
+                    // message per read would wake the UI thread hundreds of thousands of times.
+                    let mut len = match reader.read(&mut buf) {
                         Ok(0) => break,
-                        Ok(n) => {
-                            if tx.send_blocking(buf[..n].to_vec()).is_err() {
-                                break;
-                            }
-                        }
+                        Ok(n) => n,
                         Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                         Err(_) => break,
+                    };
+                    let mut eof = false;
+                    while len < CHUNK && lain_pty::poll_readable(&reader, 0).unwrap_or(false) {
+                        match reader.read(&mut buf[len..]) {
+                            Ok(0) | Err(_) => {
+                                eof = true;
+                                break;
+                            }
+                            Ok(n) => len += n,
+                        }
+                    }
+                    if tx.send_blocking(buf[..len].to_vec()).is_err() || eof {
+                        break;
                     }
                 }
             })

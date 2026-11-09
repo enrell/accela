@@ -24,11 +24,13 @@ pub struct Command {
     pub cwd: Option<PathBuf>,
     /// Extra environment variables (set after the built-in TERM variables).
     pub env: Vec<(String, String)>,
+    /// Variables of the parent environment not to pass on.
+    pub env_remove: Vec<String>,
 }
 
 impl Command {
     pub fn new(program: impl Into<String>) -> Self {
-        Self { program: program.into(), args: Vec::new(), cwd: None, env: Vec::new() }
+        Self { program: program.into(), args: Vec::new(), cwd: None, env: Vec::new(), env_remove: Vec::new() }
     }
 
     pub fn arg(mut self, a: impl Into<String>) -> Self {
@@ -38,6 +40,11 @@ impl Command {
 
     pub fn cwd(mut self, dir: impl Into<PathBuf>) -> Self {
         self.cwd = Some(dir.into());
+        self
+    }
+
+    pub fn env_remove(mut self, k: impl Into<String>) -> Self {
+        self.env_remove.push(k.into());
         self
     }
 
@@ -214,8 +221,10 @@ impl Pty {
 
 /// The parent environment plus terminal variables and `cmd.env` overrides.
 fn build_env(cmd: &Command) -> Vec<(Vec<u8>, Vec<u8>)> {
-    let mut env: Vec<(Vec<u8>, Vec<u8>)> =
-        std::env::vars_os().map(|(k, v)| (k.as_bytes().to_vec(), v.as_bytes().to_vec())).collect();
+    let mut env: Vec<(Vec<u8>, Vec<u8>)> = std::env::vars_os()
+        .map(|(k, v)| (k.as_bytes().to_vec(), v.as_bytes().to_vec()))
+        .filter(|(k, _)| !cmd.env_remove.iter().any(|r| r.as_bytes() == k.as_slice()))
+        .collect();
     let mut set = |k: &str, v: &str| {
         env.retain(|(ek, _)| ek.as_slice() != k.as_bytes());
         env.push((k.as_bytes().to_vec(), v.as_bytes().to_vec()));
@@ -242,6 +251,22 @@ fn resolve_program(program: &str, path: Option<&[u8]>) -> Option<PathBuf> {
         .filter(|d| !d.is_empty())
         .map(|d| std::path::Path::new(OsStr::from_bytes(d)).join(program))
         .find(|p| is_exec(p))
+}
+
+/// Whether `file` has data ready to read within `timeout_ms` (0 = just check).
+/// Lets a reader drain everything already buffered into one batch.
+pub fn poll_readable(file: &File, timeout_ms: i32) -> io::Result<bool> {
+    let mut pfd = libc::pollfd { fd: file.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+    loop {
+        let r = unsafe { libc::poll(&mut pfd, 1, timeout_ms) };
+        if r >= 0 {
+            return Ok(r > 0 && pfd.revents & libc::POLLIN != 0);
+        }
+        let e = io::Error::last_os_error();
+        if e.kind() != io::ErrorKind::Interrupted {
+            return Err(e);
+        }
+    }
 }
 
 fn decode_status(status: libc::c_int) -> i32 {

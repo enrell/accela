@@ -150,6 +150,11 @@ fn check_invariants(t: &Term, ctx: &str) {
         for (c, _) in &row.combining {
             assert!((*c as usize) < cols, "{ctx}: combining past end on row {i}");
         }
+        let d = row.dirty_end();
+        assert!(
+            row.cells[d..].iter().all(|c| *c == lain_vt::Cell::default()),
+            "{ctx}: row {i} has content past its high-water mark {d}"
+        );
     }
     for i in 0..rows {
         let _ = t.visible_row(i);

@@ -51,6 +51,7 @@ padding = 6
 scrollback = 10000
 cursor_blink = true
 bold_is_bright = false
+gpu = auto              # auto (integrada em híbridos) | discrete | any
 background = #1a1b26
 foreground = #c0caf5
 color1 = #f7768e        # color0 … color255
@@ -120,28 +121,56 @@ Nada que um programa escreve na tela pode virar comando ou vazar dados:
   ambiente e o `PATH` são resolvidos antes). Ao fechar: SIGHUP, depois SIGKILL após uma
   carência, e o processo filho é coletado (sem zumbis).
 
-## Performance
+## Performance e consumo
+
+Medido no app real (build release, janela 933×1000, Intel + NVIDIA híbrido):
+
+| Situação | Memória (RSS / anônima) | CPU |
+|---|---|---|
+| Ocioso | **45 MB / 21 MB** | 0% (cursor sem piscar) |
+| Histórico cheio (10k linhas) | 55 MB / 30 MB | — |
+| Depois de 21 MB de saída | 63 MB / 38 MB, estável entre execuções | volta a ~0 |
+
+**Vazão.** O núcleo processa 170–460 MB/s:
 
 ```sh
 cargo run --release -p lain-vt --example bench
 ```
 
-| Carga (200×50, 10k de scrollback) | Vazão |
+| Carga (200×50, 10k de scrollback) | Vazão do núcleo |
 |---|---|
-| ASCII | ~185 MB/s |
-| logs coloridos (256 cores + truecolor) | ~134 MB/s |
-| Unicode misto (CJK, emoji, combinantes) | ~90 MB/s |
-| redesenho de tela cheia (estilo vim/htop) | ~930 MB/s |
+| ASCII | ~460 MB/s |
+| linhas curtas (`seq`) | ~170 MB/s |
+| logs coloridos (256 cores + truecolor) | ~220 MB/s |
+| Unicode misto (CJK, emoji, combinantes) | ~110 MB/s |
+| redesenho de tela cheia (estilo vim/htop) | ~950 MB/s |
 
-- Célula de 16 bytes. O scrollback guarda linhas sem os espaços finais (10k linhas ≈ 12 MB),
-  e as alocações das linhas descartadas são reaproveitadas.
-- Caminho rápido para ASCII (cópia em bloco) e SGR sem alocação.
-- Leitura do PTY em thread própria, com canal limitado: se a interface atrasar, o
-  programa recebe *backpressure* em vez de o terminal acumular memória. A escrita também
-  roda em thread própria, então colar algo grande não trava a janela.
-- A tela só é redesenhada quando há saída nova; synchronized output segura o frame até o fim da
-  atualização. O timer de piscar só roda com a janela focada.
-- Texto é agrupado por estilo em poucos *shapes*; espaços finais não são desenhados.
+O limite de verdade é o PTY do kernel: a camada tty do Linux entrega em média ~38 bytes por
+leitura, e mesmo sem terminal nenhum a saída chega a ~30 MB/s
+(`cargo run --release -p lain-e2e --example pty_throughput`). O app atinge **~24 MB/s, cerca de
+80% desse teto**, com `seq` ou `cat`.
+
+O que mantém o consumo baixo:
+
+- **GPU:** só os drivers Vulkan das GPUs presentes são carregados. Em notebooks híbridos o
+  terminal usa a integrada e não acorda a dedicada: isso caiu de 150 para 45 MB de RSS, sem LLVM
+  nem a pilha OpenGL da NVIDIA. `gpu = discrete` (ou `any`) na config muda isso, e
+  `VK_LOADER_DRIVERS_SELECT` do usuário sempre é respeitado. A variável que o lain define para
+  si **não** passa para o shell, então programas abertos nele veem o ambiente original.
+- **Linhas:** cada linha guarda até onde foi escrita. Limpar ou recortar uma linha toca só esse
+  trecho (7 células para `seq`, não 200). Ao rolar, a linha da tela é reaproveitada e o histórico
+  recebe uma cópia do tamanho exato.
+- **Leitura do PTY:** em thread própria, drena tudo o que já está disponível num só lote (até
+  256 KB). Isso evita acordar a interface centenas de milhares de vezes. O canal é limitado, então
+  se a interface atrasar o programa recebe *backpressure*, sem acúmulo de memória. A escrita
+  também tem thread própria (colar algo grande não trava a janela).
+- **Desenho:** a tela só é redesenhada quando há saída nova. Synchronized output segura o frame
+  até o fim da atualização. O timer de piscar só roda com foco. Texto é agrupado por estilo e
+  espaços finais não são desenhados.
+- **Limitação conhecida (GPUI no Wayland):** com a janela visível, o GPUI pede um *frame callback*
+  a cada quadro e acorda a thread principal ~60×/s mesmo sem desenhar nada (o lain não redesenha:
+  1 frame em 8 s parado). Custo medido: ~0,4% de um núcleo. O compositor para esses callbacks
+  quando a janela não está visível. Remover isso exigiria um fork do GPUI.
 
 ## Testes
 
@@ -166,6 +195,6 @@ uma condição (texto na tela, EOF, modo ativo) com timeout, então a suíte é 
 | PTY | `lain-pty/tests/pty.rs` | processos reais: saída, status, sinais, tamanho, ambiente, vazamento de fds, máscara de sinais, Ctrl+C, limpeza |
 | Ponta a ponta | `lain-e2e/tests/apps.rs` | programas reais renderizam e respondem; pula se o programa não estiver instalado |
 
-Estado atual: **240 testes, ~2 s** (após compilar) e **93% de cobertura de linhas** no núcleo
+Estado atual: **244 testes, ~2 s** (após compilar) e **93% de cobertura de linhas** no núcleo
 (`lain-vt` 93%, parser 97%). O fuzz já encontrou e travou 5 bugs reais (caracteres largos
 órfãos em casos de borda) antes de chegarem ao uso.

@@ -112,6 +112,10 @@ pub struct Row {
     pub combining: Vec<(u16, Box<str>)>,
     /// Shell-integration mark (OSC 133) for this line.
     pub mark: Mark,
+    /// High-water mark: every cell at index `>= dirty` is `Cell::default()`. An upper
+    /// bound kept by every mutator, so resetting or trimming a row touches only what was
+    /// written (a 7-char line in a 200-column terminal costs 7 cells, not 200).
+    dirty: u16,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -126,7 +130,32 @@ pub enum Mark {
 
 impl Row {
     pub fn new(cols: usize, blank: Cell) -> Self {
-        Self { cells: vec![blank; cols], wrapped: false, combining: Vec::new(), mark: Mark::None }
+        let dirty = if blank.is_default_blank() { 0 } else { cols as u16 };
+        Self { cells: vec![blank; cols], wrapped: false, combining: Vec::new(), mark: Mark::None, dirty }
+    }
+
+    /// A row holding exactly `cells` (e.g. a compact scrollback copy).
+    pub fn from_cells(cells: Vec<Cell>, wrapped: bool, combining: Vec<(u16, Box<str>)>, mark: Mark) -> Self {
+        let dirty = cells.len() as u16;
+        Self { cells, wrapped, combining, mark, dirty }
+    }
+
+    #[inline]
+    pub(crate) fn touch(&mut self, end: usize) {
+        let end = end.min(self.cells.len()) as u16;
+        if end > self.dirty {
+            self.dirty = end;
+        }
+    }
+
+    /// Mark the whole row as possibly non-blank (after direct writes to `cells`).
+    pub fn mark_dirty(&mut self) {
+        self.dirty = self.cells.len() as u16;
+    }
+
+    /// See the `dirty` field: cells from here on are all default blanks.
+    pub fn dirty_end(&self) -> usize {
+        (self.dirty as usize).min(self.cells.len())
     }
 
     pub fn len(&self) -> usize {
@@ -139,8 +168,16 @@ impl Row {
 
     /// Reset to blanks, reusing the allocation.
     pub fn reset(&mut self, cols: usize, blank: Cell) {
-        self.cells.clear();
-        self.cells.resize(cols, blank);
+        if blank.is_default_blank() && self.cells.len() == cols {
+            // Only the written prefix needs clearing.
+            let d = self.dirty_end();
+            self.cells[..d].fill(blank);
+            self.dirty = 0;
+        } else {
+            self.cells.clear();
+            self.cells.resize(cols, blank);
+            self.dirty = if blank.is_default_blank() { 0 } else { cols as u16 };
+        }
         self.wrapped = false;
         self.combining.clear();
         self.mark = Mark::None;
@@ -156,6 +193,7 @@ impl Row {
             return;
         }
         self.cells[col].attrs.flags |= flags::COMBINING;
+        self.touch(col + 1);
         if let Some((_, s)) = self.combining.iter_mut().find(|(c, _)| *c as usize == col) {
             if s.chars().count() < MAX_PER_CELL {
                 let mut st = String::from(&**s);
@@ -180,6 +218,9 @@ impl Row {
             self.drop_combining(col, col + 1);
         }
         self.cells[col] = cell;
+        if !cell.is_default_blank() {
+            self.touch(col + 1);
+        }
     }
 
     /// Fill `from..to` with `blank`, keeping wide characters consistent at the edges.
@@ -193,6 +234,9 @@ impl Row {
         let to = if self.cells[to - 1].attrs.has(flags::WIDE) && to < len { to + 1 } else { to };
         self.drop_combining(from, to);
         self.cells[from..to].fill(blank);
+        if !blank.is_default_blank() {
+            self.touch(to);
+        }
     }
 
     /// Insert `n` blanks at `col`, shifting the rest right (cells pushed past the end are lost).
@@ -217,6 +261,11 @@ impl Row {
                 (*c as usize) < len
             });
         }
+        // Content moved right by up to `n`.
+        self.touch(self.dirty as usize + n);
+        if !blank.is_default_blank() {
+            self.touch(col + n);
+        }
     }
 
     /// Delete `n` cells at `col`, shifting the rest left and filling the end with blanks.
@@ -240,6 +289,9 @@ impl Row {
                 *c -= n as u16;
             }
         }
+        if !blank.is_default_blank() {
+            self.mark_dirty();
+        }
     }
 
     /// Whether `col` is the second half of a wide char (as opposed to wrap padding).
@@ -256,6 +308,9 @@ impl Row {
         if self.is_paired_spacer(col) {
             self.cells[col - 1] = blank;
             self.cells[col] = blank;
+            if !blank.is_default_blank() {
+                self.touch(col + 1);
+            }
         }
     }
 
@@ -316,6 +371,8 @@ impl Row {
     /// Blank any half of a wide char whose other half was cut off (after a partial-row
     /// move inside margins). Wrap padding in the last column is kept.
     pub fn repair_wide(&mut self, blank: Cell) {
+        // Callers rearranged cells arbitrarily: be conservative about the high-water mark.
+        self.mark_dirty();
         let len = self.cells.len();
         for c in 0..len {
             let a = self.cells[c].attrs;
@@ -330,7 +387,8 @@ impl Row {
 
     /// Length without trailing default blanks.
     pub fn trimmed_len(&self) -> usize {
-        self.cells.iter().rposition(|c| !c.is_default_blank()).map_or(0, |i| i + 1)
+        let d = self.dirty_end();
+        self.cells[..d].iter().rposition(|c| !c.is_default_blank()).map_or(0, |i| i + 1)
     }
 
     /// Resize to `cols`, padding with default blanks.
@@ -351,12 +409,14 @@ impl Row {
             self.drop_combining(cols, usize::MAX);
         }
         self.cells.resize(cols, Cell::default());
+        self.dirty = self.dirty.min(cols as u16);
     }
 
     /// Shrink storage for scrollback: drop trailing default blanks.
     pub fn compact(&mut self) {
         let n = self.trimmed_len();
         self.cells.truncate(n);
+        self.dirty = n as u16;
         if self.cells.capacity() > n + 16 {
             self.cells.shrink_to_fit();
         }
@@ -415,6 +475,8 @@ mod tests {
         for (i, c) in s.chars().enumerate() {
             r.cells[i].c = c;
         }
+        // Direct writes to `cells` must declare themselves.
+        r.mark_dirty();
         r
     }
 
@@ -482,6 +544,26 @@ mod tests {
         let mut dst = row("abc");
         dst.copy_range_from(&src, 1, 3, Cell::default());
         assert_eq!(text(&dst), "ay\u{301}z");
+    }
+
+    #[test]
+    fn reset_clears_only_the_written_prefix() {
+        let mut r = Row::new(200, Cell::default());
+        assert_eq!(r.dirty_end(), 0);
+        r.set(3, Cell { c: 'x', attrs: Attrs::default() });
+        assert_eq!(r.dirty_end(), 4);
+        r.insert_blanks(0, 2, Cell::default());
+        assert_eq!(r.dirty_end(), 6);
+        assert_eq!(r.trimmed_len(), 6);
+        r.reset(200, Cell::default());
+        assert!(r.cells.iter().all(|c| *c == Cell::default()));
+        assert_eq!(r.dirty_end(), 0);
+        // A colored blank (BCE) makes the whole row dirty.
+        let bce = Cell::blank(Attrs { bg: Color::Indexed(4), ..Attrs::default() });
+        r.erase(10, 20, bce);
+        assert_eq!(r.dirty_end(), 20);
+        r.reset(200, bce);
+        assert_eq!(r.dirty_end(), 200);
     }
 
     #[test]

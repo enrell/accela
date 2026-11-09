@@ -17,6 +17,15 @@ fn ascii_lines(n: usize) -> Vec<u8> {
     v
 }
 
+/// Very short lines (`seq`): per-line costs dominate.
+fn short_lines(n: usize) -> Vec<u8> {
+    let mut v = Vec::new();
+    for i in 0..n {
+        v.extend_from_slice(format!("{i}\r\n").as_bytes());
+    }
+    v
+}
+
 fn colored_lines(n: usize) -> Vec<u8> {
     let mut v = Vec::new();
     for i in 0..n {
@@ -75,6 +84,7 @@ fn bench(name: &str, data: &[u8], iters: usize) {
 fn main() {
     println!("lain-vt throughput (200x50, 10k scrollback):");
     bench("ascii", &ascii_lines(100_000), 5);
+    bench("short lines", &short_lines(1_000_000), 3);
     bench("colored", &colored_lines(100_000), 5);
     bench("unicode", &unicode_lines(50_000), 5);
     bench("cursor/redraw", &cursor_heavy(500, 200, 50), 5);

@@ -280,8 +280,6 @@ struct State {
     line_remap: Vec<usize>,
     dcs_buf: Vec<u8>,
     last_char: Option<char>,
-    /// A recycled row allocation (from scrollback eviction).
-    spare: Option<Row>,
     display_offset: usize,
     cell_px: (u16, u16),
     dirty: bool,
@@ -345,7 +343,6 @@ impl Term {
                 line_remap: Vec::new(),
                 dcs_buf: Vec::new(),
                 last_char: None,
-                spare: None,
                 display_offset: 0,
                 cell_px: (8, 16),
                 dirty: true,
@@ -724,23 +721,10 @@ impl State {
         }
         row.compact();
         if self.scrollback.len() >= self.scrollback_limit {
-            // Keep the evicted row's allocation for the next fresh line.
-            self.spare = self.scrollback.pop_front();
+            self.scrollback.pop_front();
             self.evicted += 1;
         }
         self.scrollback.push_back(row);
-    }
-
-    /// A blank row carrying the current background (BCE).
-    fn fresh_row(&mut self) -> Row {
-        let blank = self.blank();
-        match self.spare.take() {
-            Some(mut r) => {
-                r.reset(self.cols, blank);
-                r
-            }
-            None => Row::new(self.cols, blank),
-        }
     }
 
     /// Left/right margins narrower than the screen are in effect.
@@ -783,23 +767,29 @@ impl State {
         let n = n.min(bot - top + 1);
         let full = top == 0 && bot == self.rows - 1;
         let to_history = top == 0 && !self.modes.alt_screen;
+        let blank = self.blank();
         for _ in 0..n {
-            if full {
-                let old = self.screen.pop_front().expect("screen has rows");
-                if to_history {
-                    self.push_scrollback(old);
-                }
-                let row = self.fresh_row();
-                self.screen.push_back(row);
+            let mut old = if full {
+                self.screen.pop_front().expect("screen has rows")
             } else {
-                let mut old = self.screen.remove(top).expect("row in range");
-                if to_history {
-                    self.push_scrollback(old);
-                    old = self.fresh_row();
-                } else {
-                    let blank = self.blank();
-                    old.reset(self.cols, blank);
-                }
+                self.screen.remove(top).expect("row in range")
+            };
+            if to_history {
+                // History gets an exact-size copy; the full-width row is reused below, so
+                // a new line costs one small allocation and clears only what was written.
+                let len = old.trimmed_len();
+                let copy = Row::from_cells(
+                    old.cells[..len].to_vec(),
+                    old.wrapped,
+                    std::mem::take(&mut old.combining),
+                    old.mark,
+                );
+                self.push_scrollback(copy);
+            }
+            old.reset(self.cols, blank);
+            if full {
+                self.screen.push_back(old);
+            } else {
                 self.screen.insert(bot, old);
             }
         }
@@ -1121,6 +1111,7 @@ impl State {
                     }
                     row.cells.resize(cols, Cell::default());
                     row.wrapped = true;
+                    row.mark_dirty();
                     out.push(std::mem::replace(&mut row, Row::new(0, Cell::default())));
                     col = 0;
                 }
@@ -1154,6 +1145,7 @@ impl State {
                 new_cursor = (out.len(), (col + extra).min(cols - 1));
             }
             row.cells.resize(cols, Cell::default());
+            row.mark_dirty();
             out.push(row);
             let last_out = out.len() - 1;
             for &(old, base) in &members {
@@ -1614,6 +1606,7 @@ impl Perform for State {
             for (cell, &b) in row.cells[col..col + n].iter_mut().zip(&s[i..i + n]) {
                 *cell = Cell { c: b as char, attrs };
             }
+            row.touch(col + n);
             i += n;
             if col + n >= cols {
                 self.cursor.col = cols - 1;

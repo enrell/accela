@@ -18,6 +18,7 @@ pub struct Config {
     pub bold_is_bright: bool,
     pub theme: Theme,
     pub bindings: crate::bindings::Bindings,
+    pub gpu: Gpu,
 }
 
 impl Default for Config {
@@ -33,8 +34,20 @@ impl Default for Config {
             bold_is_bright: false,
             theme: Theme::default(),
             bindings: Default::default(),
+            gpu: Gpu::Auto,
         }
     }
+}
+
+/// Which GPU renders the terminal on machines with more than one.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Gpu {
+    /// Integrated on hybrid laptops (saves battery), otherwise whatever is present.
+    #[default]
+    Auto,
+    Discrete,
+    /// Let the Vulkan loader offer every driver.
+    Any,
 }
 
 pub fn config_path() -> Option<PathBuf> {
@@ -106,6 +119,12 @@ pub fn parse(text: &str) -> (Config, Vec<String>) {
                 None => bad("line count (0..1000000)"),
             },
             "shell" if !value.is_empty() => c.shell = Some(value.to_string()),
+            "gpu" => match value {
+                "auto" | "integrated" => c.gpu = Gpu::Auto,
+                "discrete" => c.gpu = Gpu::Discrete,
+                "any" => c.gpu = Gpu::Any,
+                _ => bad("gpu (auto, discrete, any)"),
+            },
             "bind" => {
                 if let Err(e) = c.bindings.apply(value) {
                     warnings.push(format!("line {}: bind: {e}", n + 1));
@@ -175,6 +194,8 @@ mod tests {
 
     #[test]
     fn key_bindings() {
+        assert_eq!(parse("gpu = discrete").0.gpu, Gpu::Discrete);
+        assert_eq!(parse("gpu = turbo").1.len(), 1);
         let (c, w) = parse("bind = alt+t new_tab\nbind = ctrl+shift+t none\nbind = ctrl+x explode\n");
         assert_eq!(w.len(), 1, "{w:?}");
         let m = |ctrl, shift, alt| gpui::Modifiers { control: ctrl, shift, alt, ..Default::default() };

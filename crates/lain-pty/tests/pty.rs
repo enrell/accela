@@ -72,6 +72,13 @@ fn terminal_environment() {
 }
 
 #[test]
+fn removed_variables_do_not_reach_the_child() {
+    // HOME is always set in the test environment; PATH is needed to find `sh`'s tools.
+    let p = Pty::spawn(&sh("echo \"[${HOME-unset}]\"").env_remove("HOME"), 80, 24).unwrap();
+    assert!(read_all(&p).contains("[unset]"));
+}
+
+#[test]
 fn has_controlling_tty_and_size() {
     let p = Pty::spawn(&sh("tty >/dev/null && echo has-tty; stty size"), 100, 30).unwrap();
     let out = read_all(&p);
@@ -138,13 +145,19 @@ fn nul_in_argument_is_rejected() {
 
 #[test]
 fn ctrl_c_interrupts_foreground_job() {
-    let p = Pty::spawn(&sh("echo ready; sleep 30; echo not-interrupted"), 80, 24).unwrap();
-    let mut r = p.reader().unwrap();
-    read_until(&mut r, "ready");
+    // `exec` so the foreground job is the child itself; wait until it has really become
+    // `sleep` before sending ^C (sending it while the shell is still between fork and exec
+    // makes the shell defer the signal — a race in the test, not in the terminal).
+    let mut p = Pty::spawn(&sh("exec sleep 30"), 80, 24).unwrap();
+    let comm = format!("/proc/{}/comm", p.pid());
+    let start = std::time::Instant::now();
+    while std::fs::read_to_string(&comm).map(|c| c.trim() != "sleep").unwrap_or(true) {
+        assert!(start.elapsed() < TIMEOUT, "child never became `sleep`");
+        std::thread::yield_now();
+    }
     p.writer().unwrap().write_all(&[0x03]).unwrap();
-    let mut rest = Vec::new();
-    let _ = r.read_to_end(&mut rest);
-    assert!(!String::from_utf8_lossy(&rest).contains("not-interrupted"));
+    assert_eq!(p.wait().unwrap(), 128 + libc::SIGINT);
+    assert!(start.elapsed() < Duration::from_secs(5), "^C did not interrupt promptly");
 }
 
 #[test]
@@ -164,4 +177,17 @@ fn drop_terminates_and_reaps_child() {
         assert!(start.elapsed() < TIMEOUT, "child {pid} still alive (or zombie) after drop");
         std::thread::yield_now();
     }
+}
+
+#[test]
+fn poll_reports_pending_output() {
+    let p = Pty::spawn(&sh("read x; printf hello; read y"), 80, 24).unwrap();
+    let mut r = p.reader().unwrap();
+    // Nothing yet: the child is blocked on `read`.
+    assert!(!lain_pty::poll_readable(&r, 0).unwrap());
+    p.writer().unwrap().write_all(b"\n").unwrap();
+    // Echo + output arrive; poll with a timeout instead of sleeping.
+    assert!(lain_pty::poll_readable(&r, 10_000).unwrap());
+    read_until(&mut r, "hello");
+    p.writer().unwrap().write_all(b"\n").unwrap();
 }
