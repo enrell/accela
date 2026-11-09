@@ -12,7 +12,7 @@ pub fn mods(k: &Keystroke) -> Mods {
 /// (bare modifiers, media keys...).
 pub fn key(k: &Keystroke) -> Option<Key> {
     Some(match k.key.as_str() {
-        "enter" | "kp_enter" => Key::Enter,
+        "enter" => Key::Enter,
         "tab" => Key::Tab,
         "backspace" => Key::Backspace,
         "escape" => Key::Escape,
@@ -35,6 +35,10 @@ pub fn key(k: &Keystroke) -> Option<Key> {
         "decimal" => Key::Keypad(KeypadKey::Decimal),
         "separator" => Key::Keypad(KeypadKey::Separator),
         "begin" => Key::Keypad(KeypadKey::Begin),
+        "kp_enter" => Key::Keypad(KeypadKey::Enter),
+        d if d.len() == 4 && d.starts_with("kp_") && d.as_bytes()[3].is_ascii_digit() => {
+            Key::Keypad(KeypadKey::Digit(d.as_bytes()[3] - b'0'))
+        }
         f if f.len() >= 2 && f.starts_with('f') && f[1..].bytes().all(|b| b.is_ascii_digit()) => {
             let n: u8 = f[1..].parse().ok()?;
             if !(1..=24).contains(&n) {
@@ -72,6 +76,8 @@ mod tests {
         assert_eq!(key(&ks("f99")), None);
         assert_eq!(key(&ks("add")), Some(Key::Keypad(KeypadKey::Add)));
         assert_eq!(key(&ks("begin")), Some(Key::Keypad(KeypadKey::Begin)));
+        assert_eq!(key(&ks("kp_7")), Some(Key::Keypad(KeypadKey::Digit(7))));
+        assert_eq!(key(&ks("kp_enter")), Some(Key::Keypad(KeypadKey::Enter)));
     }
 
     #[test]

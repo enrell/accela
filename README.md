@@ -78,9 +78,8 @@ interceptados pelo compositor.
 
 Anuncia `TERM=xterm-256color`, `COLORTERM=truecolor`, `TERM_PROGRAM=lain`, e cumpre essa
 entrada inteira: um teste lê o terminfo instalado e verifica **todas** as 104 capacidades de
-saída (efeito exato), as 148 de teclado (byte a byte) e os 26 caracteres gráficos (`acsc`).
-Exceções documentadas no teste: os dígitos e o Enter do teclado numérico, que chegam do sistema
-iguais às teclas principais.
+saída (efeito exato), as 159 de teclado (byte a byte, incluindo todo o teclado numérico em
+modo aplicação) e os 26 caracteres gráficos (`acsc`), sem exceções.
 
 | Área | Suporte |
 |---|---|
@@ -88,7 +87,7 @@ iguais às teclas principais.
 | Texto | UTF-8, caracteres largos (CJK, emoji), combinantes e ZWJ, reflow ao redimensionar, box-drawing e blocos desenhados por geometria (linhas sempre conectadas) |
 | Estilo | SGR completo: 16/256/truecolor (formas `;` e `:`), negrito, dim, itálico, sublinhado simples/duplo/ondulado/pontilhado/tracejado com cor (SGR 58), riscado, overline, inverso, oculto, reverse video |
 | Telas | 47 / 1047 / 1048 / 1049, scrollback com limite e compactação |
-| Teclado | xterm legado (modificadores, app cursor/keypad, operadores do teclado numérico), **protocolo de teclado do kitty** (todas as flags, pilha por tela), IME/compose |
+| Teclado | xterm legado (modificadores, app cursor/keypad, teclado numérico completo em modo aplicação), **protocolo de teclado do kitty** (todas as flags, pilha por tela), IME/compose |
 | Mouse | 9 / 1000 / 1002 / 1003 com codificações X10, UTF-8 (1005), SGR (1006), urxvt (1015), SGR-pixels (1016); rolagem alternativa (1007) |
 | Modos modernos | bracketed paste (2004), **synchronized output** (2026, com timeout), foco (1004), tema claro/escuro (996 / 2031) |
 | Consultas | DA1/DA2/DA3, XTVERSION, DSR/CPR, DECRQM, DECRQSS, XTGETTCAP, XTWINOPS 14/16/18, XTSMGRAPHICS, cores OSC 4/10/11/12 (responde com o mesmo terminador da pergunta) |

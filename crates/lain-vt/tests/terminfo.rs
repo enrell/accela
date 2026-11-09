@@ -96,11 +96,6 @@ fn manual(cap: &str) -> Option<Vec<u8>> {
     })
 }
 
-/// Keys that terminfo describes but the windowing layer can't tell apart from the main
-/// keyboard (keypad digits/enter with NumLock arrive as the same keysym names); they
-/// send the main-key equivalent, which every program also accepts.
-const PLATFORM_KEYS: &[&str] = &["ka1", "ka2", "ka3", "kb1", "kb2", "kb3", "kc1", "kc2", "kc3", "kpZRO", "kent"];
-
 fn fresh() -> Term {
     let mut t = Term::new(20, 6);
     t.set_cell_size(10, 20);
@@ -354,6 +349,18 @@ fn key_for(cap: &str) -> Option<(Key, Mods)> {
         "kpDIV" => (Key::Keypad(KeypadKey::Divide), none),
         "kpDOT" => (Key::Keypad(KeypadKey::Decimal), none),
         "kpCMA" => (Key::Keypad(KeypadKey::Separator), none),
+        "kent" => (Key::Keypad(KeypadKey::Enter), none),
+        // Keypad digits (NumLock on): ka1/ka3/kb2/kc1/kc3 are the corners and center.
+        "kpZRO" => (Key::Keypad(KeypadKey::Digit(0)), none),
+        "kc1" => (Key::Keypad(KeypadKey::Digit(1)), none),
+        "kc2" => (Key::Keypad(KeypadKey::Digit(2)), none),
+        "kc3" => (Key::Keypad(KeypadKey::Digit(3)), none),
+        "kb1" => (Key::Keypad(KeypadKey::Digit(4)), none),
+        "kb2" => (Key::Keypad(KeypadKey::Digit(5)), none),
+        "kb3" => (Key::Keypad(KeypadKey::Digit(6)), none),
+        "ka1" => (Key::Keypad(KeypadKey::Digit(7)), none),
+        "ka2" => (Key::Keypad(KeypadKey::Digit(8)), none),
+        "ka3" => (Key::Keypad(KeypadKey::Digit(9)), none),
         _ => return None,
     })
 }
@@ -398,7 +405,6 @@ fn xterm_256color_terminfo_is_fully_supported() {
                     t.focus_changed(name == "kxIN");
                     assert_eq!(t.take_output(), expected, "{name}");
                 }
-                n if PLATFORM_KEYS.contains(&n) => continue,
                 n => {
                     let (key, mods) = key_for(n).unwrap_or_else(|| panic!("key capability `{n}` ({raw}) is unmapped"));
                     let ev = KeyEvent { key, mods, text: None, action: KeyAction::Press };

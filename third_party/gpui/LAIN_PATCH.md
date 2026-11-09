@@ -18,6 +18,11 @@ Verified on Hyprland: idle wakeups 63/s -> 0/s; output, typing, tabs, cursor bli
 (23 toggles in 12 s, all 0.52–0.54 s apart) and compositor resizes all redraw.
 Re-check with `scripts/idle-wakeups.sh`.
 
+Second change: `Keystroke::from_xkb` used to strip the `kp_` prefix from every
+keypad keysym, so keypad digits and Enter were indistinguishable from the main
+keys. They now keep it (`kp_7`, `kp_enter`); other keypad keys are unchanged. This
+lets the terminal send the application-keypad codes terminfo declares (ka1, kent...).
+
 To update gpui: copy the new release here and re-apply the diff below.
 
 ```diff
@@ -36,6 +41,14 @@ To update gpui: copy the new release here and re-apply the diff below.
      fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>);
      fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
      fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>);
+@@ -867,6 +873,7 @@
+         Self { cx, handler }
+     }
+ 
++    #[allow(dead_code)]
+     fn selected_text_range(&mut self, ignore_disabled_input: bool) -> Option<UTF16Selection> {
+         self.cx
+             .update(|window, cx| {
 --- a/src/window.rs
 +++ b/src/window.rs
 @@ -93,6 +93,8 @@
@@ -112,6 +125,25 @@ To update gpui: copy the new release here and re-apply the diff below.
      }
  
      /// Schedule a frame to be drawn on the next animation frame.
+--- a/src/platform/linux/platform.rs
++++ b/src/platform/linux/platform.rs
+@@ -880,7 +880,15 @@
+             _ => {
+                 let name = xkb::keysym_get_name(key_sym).to_lowercase();
+                 if key_sym.is_keypad_key() {
+-                    name.replace("kp_", "")
++                    // lain patch: keypad digits and Enter keep their `kp_` prefix so a
++                    // terminal can send the application-keypad codes for them; other
++                    // keypad keys (navigation with NumLock off, operators) are unchanged.
++                    let stripped = name.replace("kp_", "");
++                    if stripped == "enter" || (stripped.len() == 1 && stripped.as_bytes()[0].is_ascii_digit()) {
++                        name
++                    } else {
++                        stripped
++                    }
+                 } else if let Some(key) = key_utf8.chars().next()
+                     && key_utf8.len() == 1
+                     && key.is_ascii()
 --- a/src/platform/linux/wayland/window.rs
 +++ b/src/platform/linux/wayland/window.rs
 @@ -111,6 +111,8 @@
@@ -182,7 +214,15 @@ To update gpui: copy the new release here and re-apply the diff below.
      fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
          self.0.callbacks.borrow_mut().request_frame = Some(callback);
      }
+--- a/src/taffy.rs
++++ b/src/taffy.rs
+@@ -309,7 +309,7 @@
+             unit: &Option<u16>,
+         ) -> Vec<taffy::GridTemplateComponent<T>> {
+             // grid-template-columns: repeat(<number>, minmax(0, 1fr));
+-            unit.map(|count| vec![repeat(count, vec![minmax(length(0.0), fr(1.0))])])
++            unit.map(|count| vec![repeat(count, vec![minmax(length(0.0_f32), fr(1.0_f32))])])
+                 .unwrap_or_default()
+         }
+ 
 ```
-
-Also: two `f32` literal suffixes in `taffy.rs` and `#[allow(dead_code)]` on
-`PlatformInputHandler::selected_text_range`, silencing upstream warnings.

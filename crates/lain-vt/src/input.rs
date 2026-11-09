@@ -37,6 +37,10 @@ pub enum KeypadKey {
     Separator,
     /// The center key with NumLock off.
     Begin,
+    /// Keypad digits (NumLock on).
+    Digit(u8),
+    /// The keypad's Enter.
+    Enter,
 }
 
 impl KeypadKey {
@@ -49,6 +53,8 @@ impl KeypadKey {
             KeypadKey::Decimal => ".",
             KeypadKey::Separator => ",",
             KeypadKey::Begin => "",
+            KeypadKey::Digit(d) => ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"][(d % 10) as usize],
+            KeypadKey::Enter => "\r",
         }
     }
 
@@ -62,6 +68,8 @@ impl KeypadKey {
             KeypadKey::Decimal => b'n',
             KeypadKey::Separator => b'l',
             KeypadKey::Begin => b'E',
+            KeypadKey::Digit(d) => b'p' + d % 10,
+            KeypadKey::Enter => b'M',
         }
     }
 
@@ -75,6 +83,8 @@ impl KeypadKey {
             KeypadKey::Add => 57413,
             KeypadKey::Separator => 57416,
             KeypadKey::Begin => 57427,
+            KeypadKey::Digit(d) => 57399 + (d % 10) as u32,
+            KeypadKey::Enter => 57414,
         }
     }
 }
@@ -239,6 +249,9 @@ fn encode_legacy(ev: &KeyEvent, modes: &InputModes) -> Option<Vec<u8>> {
         }
         Key::F(n @ 1..=4) => letter(b'P' + n - 1, true),
         Key::Keypad(KeypadKey::Begin) => letter(b'E', modes.app_keypad),
+        Key::Keypad(KeypadKey::Enter) if !modes.app_keypad => {
+            return encode_legacy(&KeyEvent { key: Key::Enter, ..*ev }, modes);
+        }
         Key::Keypad(k) => {
             if modes.app_keypad && !m.any() {
                 vec![0x1b, b'O', k.ss3()]
@@ -294,7 +307,13 @@ fn encode_kitty(ev: &KeyEvent, flags: u8) -> Option<Vec<u8>> {
                 }
             }
             // Keypad text keys behave like text: their character unless modified.
-            Key::Keypad(k) if k != KeypadKey::Begin && !m.ctrl && !m.alt && !m.super_ => {
+            Key::Keypad(KeypadKey::Enter) if !m.any() => {
+                if action == KeyAction::Release {
+                    return None;
+                }
+                return Some(b"\r".to_vec());
+            }
+            Key::Keypad(k) if !matches!(k, KeypadKey::Begin | KeypadKey::Enter) && !m.ctrl && !m.alt && !m.super_ => {
                 if action != KeyAction::Release {
                     return Some(k.text().as_bytes().to_vec());
                 }
@@ -538,6 +557,16 @@ mod tests {
         assert_eq!(kitty(press(Key::Keypad(Add), CTRL, None), kitty::DISAMBIGUATE), "\x1b[57413;5u");
         assert_eq!(kitty(press(Key::Keypad(Add), Mods::NONE, None), kitty::REPORT_ALL), "\x1b[57413u");
         assert_eq!(kitty(press(Key::Keypad(Begin), Mods::NONE, None), kitty::DISAMBIGUATE), "\x1b[E");
+        // Digits and Enter.
+        assert_eq!(enc(Digit(7), Mods::NONE, &InputModes::default()), b"7");
+        assert_eq!(enc(Digit(7), Mods::NONE, &app), b"\x1bOw");
+        assert_eq!(enc(Digit(0), Mods::NONE, &app), b"\x1bOp");
+        assert_eq!(enc(Enter, Mods::NONE, &InputModes::default()), b"\r");
+        assert_eq!(enc(Enter, Mods::NONE, &app), b"\x1bOM");
+        assert_eq!(kitty(press(Key::Keypad(Digit(5)), Mods::NONE, None), kitty::DISAMBIGUATE), "5");
+        assert_eq!(kitty(press(Key::Keypad(Digit(5)), Mods::NONE, None), kitty::REPORT_ALL), "\x1b[57404u");
+        assert_eq!(kitty(press(Key::Keypad(Enter), Mods::NONE, None), kitty::DISAMBIGUATE), "\r");
+        assert_eq!(kitty(press(Key::Keypad(Enter), SHIFT, None), kitty::DISAMBIGUATE), "\x1b[57414;2u");
     }
 
     #[test]
