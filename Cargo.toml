@@ -29,3 +29,6 @@ debug = false
 # gpui 0.2.2 pulls xattr 0.2.3, which references libc::ENOATTR (removed on Linux in newer libc).
 [patch.crates-io]
 xattr = { path = "third_party/xattr" }
+# Idle windows no longer wake at the display refresh rate on Wayland (see
+# third_party/gpui/LAIN_PATCH.md).
+gpui = { path = "third_party/gpui" }

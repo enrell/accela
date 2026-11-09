@@ -127,7 +127,7 @@ Medido no app real (build release, janela 933×1000, Intel + NVIDIA híbrido):
 
 | Situação | Memória (RSS / anônima) | CPU |
 |---|---|---|
-| Ocioso | **45 MB / 21 MB** | 0% (cursor sem piscar) |
+| Ocioso | **45 MB / 21 MB** | 0%, 0 despertares/s (cursor sem piscar) |
 | Histórico cheio (10k linhas) | 55 MB / 30 MB | — |
 | Depois de 21 MB de saída | 63 MB / 38 MB, estável entre execuções | volta a ~0 |
 
@@ -167,10 +167,12 @@ O que mantém o consumo baixo:
 - **Desenho:** a tela só é redesenhada quando há saída nova. Synchronized output segura o frame
   até o fim da atualização. O timer de piscar só roda com foco. Texto é agrupado por estilo e
   espaços finais não são desenhados.
-- **Limitação conhecida (GPUI no Wayland):** com a janela visível, o GPUI pede um *frame callback*
-  a cada quadro e acorda a thread principal ~60×/s mesmo sem desenhar nada (o lain não redesenha:
-  1 frame em 8 s parado). Custo medido: ~0,4% de um núcleo. O compositor para esses callbacks
-  quando a janela não está visível. Remover isso exigiria um fork do GPUI.
+- **Janela ociosa não acorda:** o GPUI original pedia um *frame callback* ao compositor a
+  cada quadro, acordando a thread principal ~60×/s para sempre. Um patch pequeno no GPUI
+  (`third_party/gpui/LAIN_PATCH.md`, com o diff) faz os quadros serem pedidos só quando há
+  algo a desenhar: parado, **0 despertares/s** (`scripts/idle-wakeups.sh`). Saída gradual,
+  digitação, abas, cursor piscando e redimensionamento pelo compositor foram verificados na
+  janela real.
 
 ## Testes
 
