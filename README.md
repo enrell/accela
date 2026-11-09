@@ -130,6 +130,16 @@ Medido no app real (build release, janela 933×1000, Intel + NVIDIA híbrido):
 | Histórico cheio (10k linhas) | 55 MB / 30 MB | — |
 | Depois de 21 MB de saída | 63 MB / 38 MB, estável entre execuções | volta a ~0 |
 
+Os três caminhos de renderização foram verificados na mesma máquina, que equivalem aos casos
+de outras máquinas: só GPU integrada, só GPU dedicada e nenhuma GPU. Os três desenham igual
+(cores, CJK, box-drawing):
+
+| Renderização | RSS (anônima) | CPU ocioso | Driver carregado |
+|---|---|---|---|
+| Integrada (Intel; padrão em híbridos) | **48 MB (21)** | 0 | `libvulkan_intel` |
+| Dedicada (`gpu = discrete`) | 323 MB (104) | 0,6% | NVIDIA |
+| Sem GPU (lavapipe, CPU) | 133 MB (42) | 0 | `libvulkan_lvp` |
+
 **Vazão.** O núcleo processa 170–460 MB/s:
 
 ```sh
