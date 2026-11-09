@@ -95,6 +95,25 @@ modo aplicação) e os 26 caracteres gráficos (`acsc`), sem exceções.
 | Imagens | **kitty graphics** (RGB/RGBA/PNG, envio em partes, `a=t/T/p/q/d`, z-index, `C=1`, ancorada no texto ao rolar e ao fazer reflow) e **sixel** (com raster attributes, cores RGB e HLS) |
 | Cursor | bloco/barra/sublinhado, piscar (DECSCUSR), contorno vazado sem foco |
 
+**Programas que escolhem recursos pelo nome do terminal.** Alguns programas não perguntam ao
+terminal o que ele suporta: consultam uma lista de nomes conhecidos (`TERM_PROGRAM`) e desligam
+o resto para nomes desconhecidos como `lain`. O grok, por exemplo, só envia imagens e só usa o
+teclado do kitty para kitty, Ghostty, WezTerm e iTerm2. Testado com o grok real: como `lain`
+envia 0 comandos de imagem; apresentado como `kitty`, envia a imagem e o lain a desenha. A
+solução sem mentir para os outros programas é apresentar o lain como kitty só para esse
+programa e só dentro do lain (fish):
+
+```fish
+# ~/.config/fish/functions/grok.fish
+function grok --wraps grok
+    if test "$TERM_PROGRAM" = lain
+        TERM_PROGRAM=kitty command grok $argv
+    else
+        command grok $argv
+    end
+end
+```
+
 Testado de ponta a ponta com: bash/readline, fish, vim, neovim, less, htop, btop, nano,
 curses (Python), git + pager, tput.
 
