@@ -1,0 +1,14 @@
+[package]
+name = "lain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lain-vt = { path = "../lain-vt" }
+lain-pty = { path = "../lain-pty" }
+gpui = { version = "0.2.2", default-features = false, features = ["wayland", "font-kit"] }
+async-channel = "2"
+# Already in the build through gpui; used to decode inline images (kitty/sixel).
+image = { version = "0.25", default-features = false, features = ["png"] }
+smallvec = "1"

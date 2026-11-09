@@ -1,0 +1,26 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["third_party/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[profile.release]
+debug = "line-tables-only"
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+debug = "line-tables-only"
+
+# Dependencies (gpui & co.) optimized and without debuginfo: fast app, small target/.
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
+# gpui 0.2.2 pulls xattr 0.2.3, which references libc::ENOATTR (removed on Linux in newer libc).
+[patch.crates-io]
+xattr = { path = "third_party/xattr" }
