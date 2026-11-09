@@ -111,7 +111,7 @@ pub struct WaylandWindowState {
     hovered: bool,
     in_progress_configure: Option<InProgressConfigure>,
     resize_throttle: bool,
-    /// lain patch: a frame callback is requested and not yet delivered.
+    /// accela patch: a frame callback is requested and not yet delivered.
     frame_pending: bool,
     in_progress_window_controls: Option<WindowControls>,
     window_controls: WindowControls,
@@ -356,7 +356,7 @@ impl WaylandWindowStatePtr {
         Rc::ptr_eq(&self.state, &other.state)
     }
 
-    /// lain patch: frame callbacks are no longer re-armed unconditionally (that woke the
+    /// accela patch: frame callbacks are no longer re-armed unconditionally (that woke the
     /// app at the display refresh rate forever, even with nothing to draw). The window
     /// asks for one through [`Self::request_frame_callback`] whenever it becomes dirty.
     pub fn frame(&self) {
@@ -376,8 +376,8 @@ impl WaylandWindowStatePtr {
         let Ok(mut state) = self.state.try_borrow_mut() else {
             // GPUI releases the window state before running app code, so this shouldn't
             // happen; if it does, the next input/configure event will request a frame.
-            if std::env::var_os("LAIN_DEBUG_FRAMES").is_some() {
-                eprintln!("lain: frame wake while window state is borrowed");
+            if std::env::var_os("ACCELA_DEBUG_FRAMES").is_some() {
+                eprintln!("accela: frame wake while window state is borrowed");
             }
             return;
         };

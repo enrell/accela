@@ -18,7 +18,7 @@ debug = "line-tables-only"
 
 # The emulator core is exercised by a fuzzer in every test run: optimize it a little so
 # the suite stays fast. Overflow checks and debug assertions remain on.
-[profile.dev.package.lain-vt]
+[profile.dev.package.accela-vt]
 opt-level = 1
 
 # Dependencies (gpui & co.) optimized and without debuginfo: fast app, small target/.
@@ -30,5 +30,5 @@ debug = false
 [patch.crates-io]
 xattr = { path = "third_party/xattr" }
 # Idle windows no longer wake at the display refresh rate on Wayland (see
-# third_party/gpui/LAIN_PATCH.md).
+# third_party/gpui/ACCELA_PATCH.md).
 gpui = { path = "third_party/gpui" }

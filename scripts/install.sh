@@ -2,19 +2,19 @@
 # Build an optimized binary and install it for the current user.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-cargo build --release -p lain
-install -Dm755 target/release/lain "$HOME/.local/bin/lain"
+cargo build --release -p accela
+install -Dm755 target/release/accela "$HOME/.local/bin/accela"
 apps="$HOME/.local/share/applications"
 mkdir -p "$apps"
-cat > "$apps/lain.desktop" <<'DESKTOP'
+cat > "$apps/accela.desktop" <<'DESKTOP'
 [Desktop Entry]
 Type=Application
-Name=lain
+Name=accela
 Comment=Fast GPU terminal
-Exec=lain
+Exec=accela
 Icon=utilities-terminal
 Terminal=false
 Categories=System;TerminalEmulator;
-StartupWMClass=lain
+StartupWMClass=accela
 DESKTOP
-echo "installed: $HOME/.local/bin/lain ($(lain --version 2>/dev/null || echo 'not on PATH'))"
+echo "installed: $HOME/.local/bin/accela ($(accela --version 2>/dev/null || echo 'not on PATH'))"

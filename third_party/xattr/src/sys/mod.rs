@@ -8,7 +8,7 @@ macro_rules! platforms {
             #[cfg(any($(target_os = $platform),*))]
             pub use self::$module::*;
 
-            // lain patch: libc >= 0.2.18x dropped ENOATTR on Linux; it is ENODATA there.
+            // accela patch: libc >= 0.2.18x dropped ENOATTR on Linux; it is ENODATA there.
             #[cfg(all(any($(target_os = $platform),*), any(target_os = "linux", target_os = "android")))]
             pub const ENOATTR: ::libc::c_int = ::libc::ENODATA;
             #[cfg(all(any($(target_os = $platform),*), not(any(target_os = "linux", target_os = "android"))))]

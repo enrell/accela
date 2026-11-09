@@ -488,7 +488,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn toggle_fullscreen(&self);
     fn is_fullscreen(&self) -> bool;
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>);
-    /// lain patch: a function that asks the platform for a frame callback. Platforms
+    /// accela patch: a function that asks the platform for a frame callback. Platforms
     /// that return one stop requesting frames on their own while the window is idle;
     /// the window calls it whenever it becomes dirty. `None` keeps the old behavior.
     fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {

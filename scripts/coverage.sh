@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Line/region coverage for the core crates (lain-vt, lain-pty), measured across all
+# Line/region coverage for the core crates (accela-vt, accela-pty), measured across all
 # their tests plus the end-to-end suite. GPU code is excluded: it's covered by the
 # pure `frame`/`boxdraw`/`images` unit tests and by manual runs.
 #
@@ -19,17 +19,17 @@ export CARGO_TARGET_DIR="$out/build"
 export RUSTFLAGS="-C instrument-coverage"
 export LLVM_PROFILE_FILE="$PWD/$out/prof/%p-%m.profraw"
 
-cargo test -q -p lain-vt -p lain-pty -p lain-e2e >/dev/null
+cargo test -q -p accela-vt -p accela-pty -p accela-e2e >/dev/null
 
 "$bin/llvm-profdata" merge -sparse "$out"/prof/*.profraw -o "$out/merged.profdata"
 
 objects=()
-for f in $(cargo test -q -p lain-vt -p lain-pty -p lain-e2e --no-run --message-format=json 2>/dev/null |
+for f in $(cargo test -q -p accela-vt -p accela-pty -p accela-e2e --no-run --message-format=json 2>/dev/null |
     sed -n 's/.*"executable":"\([^"]*\)".*/\1/p'); do
     objects+=(-object "$f")
 done
 
-filter=(--ignore-filename-regex='(\.cargo/registry|/rustc/|/tests/|lain-e2e/src|/examples/)')
+filter=(--ignore-filename-regex='(\.cargo/registry|/rustc/|/tests/|accela-e2e/src|/examples/)')
 "$bin/llvm-cov" report "${objects[@]}" -instr-profile="$out/merged.profdata" "${filter[@]}" |
     sed "s|$PWD/||"
 if [[ "${1:-}" == "--html" ]]; then

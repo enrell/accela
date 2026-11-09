@@ -1,0 +1,18 @@
+[package]
+name = "accela"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+accela-vt = { path = "../accela-vt" }
+accela-pty = { path = "../accela-pty" }
+gpui = { version = "0.2.2", default-features = false, features = ["wayland", "font-kit"] }
+async-channel = "2"
+# Already in the build through gpui; used to decode inline images (kitty/sixel).
+image = { version = "0.25", default-features = false, features = ["png"] }
+smallvec = "1"
+
+[dev-dependencies]
+# Headless window/test platform for driving the real Workspace in tests.
+gpui = { version = "0.2.2", default-features = false, features = ["wayland", "font-kit", "test-support"] }

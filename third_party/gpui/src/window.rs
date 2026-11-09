@@ -93,7 +93,7 @@ impl DispatchPhase {
 
 struct WindowInvalidatorInner {
     pub dirty: bool,
-    /// lain patch: asks the platform for a frame when the window becomes dirty.
+    /// accela patch: asks the platform for a frame when the window becomes dirty.
     pub waker: Option<Rc<dyn Fn()>>,
     pub draw_phase: DrawPhase,
     pub dirty_views: FxHashSet<EntityId>,

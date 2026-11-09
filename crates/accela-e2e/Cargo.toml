@@ -1,0 +1,11 @@
+[package]
+name = "accela-e2e"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "End-to-end compatibility tests: real programs running in accela-pty + accela-vt."
+
+[dependencies]
+accela-vt = { path = "../accela-vt" }
+accela-pty = { path = "../accela-pty" }

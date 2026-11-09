@@ -880,7 +880,7 @@ impl crate::Keystroke {
             _ => {
                 let name = xkb::keysym_get_name(key_sym).to_lowercase();
                 if key_sym.is_keypad_key() {
-                    // lain patch: keypad digits and Enter keep their `kp_` prefix so a
+                    // accela patch: keypad digits and Enter keep their `kp_` prefix so a
                     // terminal can send the application-keypad codes for them; other
                     // keypad keys (navigation with NumLock off, operators) are unchanged.
                     let stripped = name.replace("kp_", "");
